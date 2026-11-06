@@ -1,4 +1,6 @@
 function Import-DataPilotLocalEnvironment {
+    param([string[]]$Exclude = @())
+
     $projectRoot = Split-Path -Parent $PSScriptRoot
     $envFile = Join-Path $projectRoot '.env'
     if (-not (Test-Path -LiteralPath $envFile)) {
@@ -17,6 +19,9 @@ function Import-DataPilotLocalEnvironment {
 
         $name = $parts[0].Trim()
         if ($name -notmatch '^DATAPILOT_[A-Za-z0-9_]+$') {
+            continue
+        }
+        if ($name -in $Exclude) {
             continue
         }
 

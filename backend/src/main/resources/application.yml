@@ -1,6 +1,15 @@
 spring:
   application:
     name: datapilot
+  datasource:
+    url: jdbc:mysql://${DATAPILOT_DB_HOST:127.0.0.1}:${DATAPILOT_DB_PORT:3307}/${DATAPILOT_DB_NAME:datapilot}?useUnicode=true&characterEncoding=utf8&connectionTimeZone=UTC&forceConnectionTimeZoneToSession=true
+    username: ${DATAPILOT_DB_READ_USER:datapilot_reader}
+    password: ${DATAPILOT_DB_READ_PASSWORD:}
+    hikari:
+      read-only: true
+      maximum-pool-size: 8
+      connection-timeout: 3000
+      initialization-fail-timeout: -1
   ai:
     model:
       chat: none

@@ -1,0 +1,33 @@
+services:
+  mysql:
+    image: mysql:8.4.13
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DATAPILOT_DB_ROOT_PASSWORD:?Run scripts/setup-local-env.ps1 first}
+      MYSQL_DATABASE: ${DATAPILOT_DB_NAME:-datapilot}
+      DATAPILOT_DB_READ_USER: ${DATAPILOT_DB_READ_USER:-datapilot_reader}
+      DATAPILOT_DB_READ_PASSWORD: ${DATAPILOT_DB_READ_PASSWORD:?Run scripts/setup-local-env.ps1 first}
+      DATAPILOT_DB_SEED_USER: ${DATAPILOT_DB_SEED_USER:-datapilot_seed}
+      DATAPILOT_DB_SEED_PASSWORD: ${DATAPILOT_DB_SEED_PASSWORD:?Run scripts/setup-local-env.ps1 first}
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+      - --innodb-buffer-pool-size=512M
+    ports:
+      - "127.0.0.1:${DATAPILOT_DB_PORT:-3307}:3306"
+    volumes:
+      - datapilot_mysql_data:/var/lib/mysql
+      - ./database/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          MYSQL_PWD="$${DATAPILOT_DB_READ_PASSWORD}" mysql --protocol=TCP --host=127.0.0.1 --user="$${DATAPILOT_DB_READ_USER}" --database="$${MYSQL_DATABASE}" --batch --skip-column-names --execute="SELECT 1 FROM dataset_metadata WHERE dataset_code = 'SYNTHETIC_ECOMMERCE_V1' LIMIT 1" >/dev/null
+          && MYSQL_PWD="$${DATAPILOT_DB_SEED_PASSWORD}" mysql --protocol=TCP --host=127.0.0.1 --user="$${DATAPILOT_DB_SEED_USER}" --database="$${MYSQL_DATABASE}" --batch --skip-column-names --execute="SELECT 1 FROM dataset_metadata LIMIT 1" >/dev/null
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    restart: unless-stopped
+
+volumes:
+  datapilot_mysql_data:

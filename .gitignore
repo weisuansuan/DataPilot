@@ -7,5 +7,6 @@
 **/.vite/
 **/.idea/
 .runtime/
+database/data/
 .DS_Store
 Thumbs.db

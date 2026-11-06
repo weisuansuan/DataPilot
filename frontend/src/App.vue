@@ -1,42 +1,115 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { init, use, type ECharts } from 'echarts/core'
+import { BarChart } from 'echarts/charts'
+import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/components'
+import { CanvasRenderer } from 'echarts/renderers'
 
-type HealthState = 'checking' | 'connected' | 'unavailable'
+use([BarChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer])
 
-const backendState = ref<HealthState>('checking')
-const backendMessage = ref('正在连接本机服务…')
+interface RegionComparison {
+  regionCode: string
+  regionName: string
+  septemberPaidOrders: number
+  octoberPaidOrders: number
+  septemberSales: number
+  octoberSales: number
+  salesChange: number
+  salesChangePercent: number
+}
 
-const stateLabel: Record<HealthState, string> = {
-  checking: '检查中',
-  connected: '服务已就绪',
-  unavailable: '未连接',
+interface CategoryRefundRate {
+  categoryCode: string
+  categoryName: string
+  soldUnits: number
+  refundedUnits: number
+  refundRate: number
+}
+
+interface Overview {
+  syntheticData: boolean
+  datasetCode: string
+  orderCount: number
+  paidOrderCount: number
+  paidSalesAmount: number
+  completedRefundAmount: number
+  refundObservationCutoff: string
+  generatedAt: string
+  regionComparisons: RegionComparison[]
+  categoryRefundRates: CategoryRefundRate[]
+}
+
+type LoadState = 'loading' | 'ready' | 'error'
+
+const loadState = ref<LoadState>('loading')
+const errorMessage = ref('')
+const overview = ref<Overview | null>(null)
+const regionChartElement = ref<HTMLDivElement | null>(null)
+const refundChartElement = ref<HTMLDivElement | null>(null)
+let regionChart: ECharts | undefined
+let refundChart: ECharts | undefined
+
+const money = new Intl.NumberFormat('zh-CN', { style: 'currency', currency: 'CNY', maximumFractionDigits: 0 })
+const integer = new Intl.NumberFormat('zh-CN')
+const percent = new Intl.NumberFormat('zh-CN', { style: 'percent', maximumFractionDigits: 1 })
+
+function renderCharts(data: Overview) {
+  if (regionChartElement.value) {
+    regionChart = init(regionChartElement.value)
+    regionChart.setOption({
+      color: ['#a9c7b8', '#267c66'],
+      tooltip: { trigger: 'axis', valueFormatter: (value: string | number) => money.format(Number(value)) },
+      legend: { top: 0, right: 0, itemWidth: 9, itemHeight: 9, textStyle: { color: '#78857f' } },
+      grid: { left: 48, right: 15, top: 38, bottom: 22 },
+      xAxis: { type: 'category', data: data.regionComparisons.map((item) => item.regionName), axisTick: { show: false }, axisLine: { lineStyle: { color: '#e8eeea' } }, axisLabel: { color: '#77847d' } },
+      yAxis: { type: 'value', axisLabel: { color: '#98a29c', formatter: (value: number) => `${Math.round(value / 10000)}万` }, splitLine: { lineStyle: { color: '#edf1ee' } } },
+      series: [
+        { name: '9 月实付', type: 'bar', data: data.regionComparisons.map((item) => item.septemberSales), barMaxWidth: 25, itemStyle: { borderRadius: [4, 4, 0, 0] } },
+        { name: '10 月实付', type: 'bar', data: data.regionComparisons.map((item) => item.octoberSales), barMaxWidth: 25, itemStyle: { borderRadius: [4, 4, 0, 0] } },
+      ],
+    })
+  }
+
+  if (refundChartElement.value) {
+    refundChart = init(refundChartElement.value)
+    refundChart.setOption({
+      color: ['#c77d5f'],
+      tooltip: { trigger: 'axis', valueFormatter: (value: string | number) => percent.format(Number(value)) },
+      grid: { left: 48, right: 16, top: 16, bottom: 25 },
+      xAxis: { type: 'category', data: data.categoryRefundRates.map((item) => item.categoryName), axisTick: { show: false }, axisLine: { lineStyle: { color: '#e8eeea' } }, axisLabel: { color: '#77847d', interval: 0 } },
+      yAxis: { type: 'value', axisLabel: { color: '#98a29c', formatter: (value: number) => `${Math.round(value * 100)}%` }, splitLine: { lineStyle: { color: '#edf1ee' } } },
+      series: [{ name: '退款件数 / 已售件数', type: 'bar', data: data.categoryRefundRates.map((item) => item.refundRate), barMaxWidth: 42, itemStyle: { borderRadius: [5, 5, 0, 0] } }],
+    })
+  }
+}
+
+function resizeCharts() {
+  regionChart?.resize()
+  refundChart?.resize()
 }
 
 onMounted(async () => {
   try {
-    const response = await fetch('/actuator/health/liveness', {
-      headers: { Accept: 'application/json' },
-    })
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`)
+    const response = await fetch('/api/v1/analytics/overview', { headers: { Accept: 'application/json' } })
+    if (!response.ok) throw new Error(`数据接口返回 HTTP ${response.status}`)
+    const data: Overview = await response.json()
+    if (!data.syntheticData || data.datasetCode !== 'SYNTHETIC_ECOMMERCE_V1') {
+      throw new Error('数据集标记未通过校验，已停止展示。')
     }
-
-    const health: unknown = await response.json()
-    if (
-      typeof health !== 'object' ||
-      health === null ||
-      !('status' in health) ||
-      health.status !== 'UP'
-    ) {
-      throw new Error('后端健康检查未返回 UP')
-    }
-
-    backendState.value = 'connected'
-    backendMessage.value = 'Spring Boot 后端已响应健康检查'
-  } catch {
-    backendState.value = 'unavailable'
-    backendMessage.value = '请在 PowerShell 中运行 .\scripts\start-backend.ps1'
+    overview.value = data
+    loadState.value = 'ready'
+    requestAnimationFrame(() => renderCharts(data))
+    window.addEventListener('resize', resizeCharts)
+  } catch (error) {
+    loadState.value = 'error'
+    errorMessage.value = error instanceof Error ? error.message : '无法读取数据库分析结果。'
   }
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', resizeCharts)
+  regionChart?.dispose()
+  refundChart?.dispose()
 })
 </script>
 
@@ -44,87 +117,69 @@ onMounted(async () => {
   <main class="workspace">
     <header class="topbar">
       <a class="brand" href="#home" aria-label="DataPilot 首页">
-        <span class="brand-mark" aria-hidden="true">
-          <i></i><i></i><i></i>
-        </span>
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
         <span class="brand-name">DataPilot</span>
       </a>
-
-      <div class="stage-label"><span></span> 第一阶段 · 工程基础</div>
+      <div class="stage-label"><span></span> 第二阶段 · 合成业务数据</div>
     </header>
 
-    <section id="home" class="hero" aria-labelledby="page-title">
-      <p class="eyebrow"><span class="eyebrow-line"></span> 面向可信业务数据的 AI 分析平台</p>
-      <h1 id="page-title">让每一个结论，<br /><span>都能回到数据本身。</span></h1>
-      <p class="hero-copy">
-        从业务问题到可验证的 SQL，再到清晰的分析图表。DataPilot 正在搭建每一步都可检查的数据分析链路。
-      </p>
-
-      <div class="health-card" :class="`health-card--${backendState}`" role="status" aria-live="polite">
+    <section id="home" class="hero">
+      <p class="eyebrow"><span class="eyebrow-line"></span> 电商业务数据工作台</p>
+      <h1>从业务事实，<br /><span>开始可验证的分析。</span></h1>
+      <p class="hero-copy">分析结果直接来自本地 MySQL。指标口径以支付成功时间为准，退款单独核算。</p>
+      <div v-if="loadState === 'ready' && overview" class="health-card health-card--connected" role="status">
         <span class="health-indicator" aria-hidden="true"></span>
-        <span class="health-copy">
-          <strong>{{ stateLabel[backendState] }}</strong>
-          <span>{{ backendMessage }}</span>
-        </span>
-        <span class="health-detail">本机运行 · 127.0.0.1:8080</span>
+        <span class="health-copy"><strong>数据库已连接</strong><span>已读取真实 MySQL 聚合查询结果</span></span>
+        <span class="health-detail">只读账号 · MySQL 8</span>
+      </div>
+      <div v-else-if="loadState === 'loading'" class="health-card" role="status">
+        <span class="health-indicator"></span><span class="health-copy"><strong>读取中</strong><span>正在查询本机 MySQL</span></span>
+      </div>
+      <div v-else class="health-card health-card--unavailable" role="alert">
+        <span class="health-indicator"></span><span class="health-copy"><strong>数据暂不可用</strong><span>{{ errorMessage }} 请先启动数据库、生成数据并运行后端。</span></span>
       </div>
     </section>
 
-    <section class="build-panel" aria-labelledby="build-title">
-      <div class="panel-heading">
-        <div>
-          <p class="section-kicker">从可运行的基础开始</p>
-          <h2 id="build-title">分析工作台，正在准备就绪</h2>
-        </div>
-        <span class="progress-label"><span></span> 阶段 1 / 5</span>
+    <section v-if="loadState === 'ready' && overview" class="dashboard" aria-label="数据库分析结果">
+      <div class="synthetic-banner"><span class="notice-icon">i</span><span><strong>合成数据</strong>　以下数据均由固定随机种子生成，仅用于开发演示，不代表真实业务。</span></div>
+
+      <div class="metric-grid">
+        <article class="metric-card"><span>订单总数</span><strong>{{ integer.format(overview.orderCount) }}</strong><small>笔合成订单</small></article>
+        <article class="metric-card"><span>已支付订单</span><strong>{{ integer.format(overview.paidOrderCount) }}</strong><small>支付成功订单</small></article>
+        <article class="metric-card"><span>累计实付金额</span><strong>{{ money.format(overview.paidSalesAmount) }}</strong><small>按 paid_at 统计本金</small></article>
+        <article class="metric-card"><span>已完成退款</span><strong>{{ money.format(overview.completedRefundAmount) }}</strong><small>单独列示，不冲减实付</small></article>
       </div>
 
-      <div class="milestones" aria-label="项目开发阶段">
-        <article class="milestone milestone--active">
-          <span class="milestone-number">01</span>
-          <h3>工程基础</h3>
-          <p>服务、测试与本地开发环境</p>
-          <span class="milestone-state">当前阶段</span>
+      <div class="chart-grid">
+        <article class="chart-card">
+          <div class="chart-heading"><div><p class="section-kicker">REGIONAL SALES</p><h2>地区实付金额变化</h2></div><span class="chart-caption">2026 年 9 月 / 10 月</span></div>
+          <div ref="regionChartElement" class="chart" aria-label="各地区九月和十月实付金额柱状图"></div>
+          <div class="insight-list">
+            <p v-for="region in [...overview.regionComparisons].sort((a, b) => a.salesChange - b.salesChange).slice(0, 3)" :key="region.regionCode">
+              <span>{{ region.regionName }}</span><strong :class="region.salesChange < 0 ? 'negative' : ''">{{ region.salesChange < 0 ? '−' : '+' }}{{ money.format(Math.abs(region.salesChange)) }} <small>({{ percent.format(region.salesChangePercent) }})</small></strong>
+            </p>
+          </div>
+          <p class="metric-definition">实付金额按 payment.paid_at 归月；统计支付成功本金，退款另列。</p>
         </article>
-        <span class="milestone-connector" aria-hidden="true"></span>
-        <article class="milestone">
-          <span class="milestone-number">02</span>
-          <h3>业务数据</h3>
-          <p>可重复生成的电商合成数据</p>
-          <span class="milestone-state">待开发</span>
-        </article>
-        <span class="milestone-connector" aria-hidden="true"></span>
-        <article class="milestone">
-          <span class="milestone-number">03</span>
-          <h3>查询安全</h3>
-          <p>SQL AST 校验与只读执行</p>
-          <span class="milestone-state">待开发</span>
-        </article>
-        <span class="milestone-connector" aria-hidden="true"></span>
-        <article class="milestone">
-          <span class="milestone-number">04</span>
-          <h3>分析呈现</h3>
-          <p>真实结果、图表与来源追溯</p>
-          <span class="milestone-state">待开发</span>
-        </article>
-        <span class="milestone-connector" aria-hidden="true"></span>
-        <article class="milestone">
-          <span class="milestone-number">05</span>
-          <h3>AI 闭环</h3>
-          <p>Text2SQL 执行反馈与评测</p>
-          <span class="milestone-state">待开发</span>
+
+        <article class="chart-card">
+          <div class="chart-heading"><div><p class="section-kicker">REFUND RATE</p><h2>各品类商品退款率</h2></div><span class="chart-caption">退款件数 / 已售件数</span></div>
+          <div ref="refundChartElement" class="chart" aria-label="各商品品类退款率柱状图"></div>
+          <div class="insight-list category-rates">
+            <p v-for="category in [...overview.categoryRefundRates].sort((a, b) => b.refundRate - a.refundRate)" :key="category.categoryCode">
+              <span>{{ category.categoryName }} <small>{{ integer.format(category.refundedUnits) }} / {{ integer.format(category.soldUnits) }} 件</small></span><strong :class="category.categoryCode === 'electronics' ? 'negative' : ''">{{ percent.format(category.refundRate) }}</strong>
+            </p>
+          </div>
+          <p class="metric-definition">仅统计已支付订单；退款按退款明细关联的商品行归类，观察截止 {{ overview.refundObservationCutoff }}。</p>
         </article>
       </div>
 
-      <p class="data-notice">
-        <span class="notice-icon" aria-hidden="true">i</span>
-        <span><strong>数据来源说明</strong>　尚未连接业务数据库或大模型。本页面暂不展示业务指标、查询结果或模拟数据。</span>
-      </p>
+      <div class="source-note"><strong>数据来源</strong><span>sales_order · payment · order_item · product · product_category · refund</span><small>数据集 {{ overview.datasetCode }} · 生成时间 {{ new Date(overview.generatedAt).toLocaleString('zh-CN') }}</small></div>
     </section>
 
     <footer class="footer">
       <span>DataPilot <span class="footer-divider">/</span> 为可靠分析而构建</span>
-      <span>JAVA 21 <span class="footer-dot"></span> VUE 3 <span class="footer-dot"></span> MYSQL 8</span>
+      <span>JAVA 21 <i></i> VUE 3 <i></i> MYSQL 8 <i></i> ECHARTS</span>
     </footer>
   </main>
 </template>

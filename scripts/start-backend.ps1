@@ -1,7 +1,7 @@
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot 'import-local-env.ps1')
-Import-DataPilotLocalEnvironment
+Import-DataPilotLocalEnvironment -Exclude @('DATAPILOT_DB_ROOT_PASSWORD', 'DATAPILOT_DB_SEED_PASSWORD')
 
 $java = Get-Command java -ErrorAction SilentlyContinue
 if (-not $java) {

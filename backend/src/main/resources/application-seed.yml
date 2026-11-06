@@ -1,0 +1,9 @@
+spring:
+  main:
+    web-application-type: none
+  datasource:
+    username: ${DATAPILOT_DB_SEED_USER:datapilot_seed}
+    password: ${DATAPILOT_DB_SEED_PASSWORD:}
+    hikari:
+      read-only: false
+      maximum-pool-size: 2
