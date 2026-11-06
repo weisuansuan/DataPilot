@@ -30,7 +30,7 @@ Run these commands from the project root in PowerShell. The first command create
 .\scripts\validate-dataset.ps1
 ```
 
-The default seed contains 100,000 orders. To exercise a larger dataset, pass any count from 10 to 1,000,000, for example `\.\scripts\seed-synthetic-data.ps1 -OrderCount 250000`. Rerunning the seeder replaces rows only in the dedicated `datapilot` schema after checking both its database name and synthetic dataset marker. The named MySQL volume persists across restarts.
+The default seed contains 100,000 orders. On the development machine the fixed-seed batch run completed in about 15 seconds; actual timing depends on the machine. To exercise a larger dataset, pass any count from 10 to 1,000,000, for example `\.\scripts\seed-synthetic-data.ps1 -OrderCount 250000`. Rerunning the seeder replaces rows only in the dedicated `datapilot` schema after checking both its database name and synthetic dataset marker. The named MySQL volume persists across restarts.
 
 Database accounts are split by purpose: `datapilot_reader` has only `SELECT` on `datapilot.*` and is used by the web application; `datapilot_seed` has only `SELECT`, `INSERT`, `UPDATE`, and `DELETE` on that schema and is used only by the seeder. The MySQL root password is used only inside the database container. Versioned schema files in `database/init/` run when the named volume is first initialized.
 
