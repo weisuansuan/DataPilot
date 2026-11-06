@@ -19,6 +19,11 @@ spring:
         transcription: none
       image: none
       moderation: none
+datapilot:
+  query:
+    timeout-seconds: ${DATAPILOT_QUERY_TIMEOUT_SECONDS:5}
+    max-concurrency: ${DATAPILOT_QUERY_MAX_CONCURRENCY:4}
+    max-plan-cost: ${DATAPILOT_QUERY_MAX_PLAN_COST:10000000}
 
 server:
   address: 127.0.0.1

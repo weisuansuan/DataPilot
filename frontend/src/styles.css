@@ -202,6 +202,32 @@ h1 > span { color: #70817a; font-weight: 400; }
 .source-note small { color: #a0aaa4; font-size: 9px; }
 .footer i { width: 3px; height: 3px; border-radius: 50%; background: #a6b2aa; }
 
+.sql-workbench { display: grid; gap: 14px; margin-top: 26px; padding: 22px; border: 1px solid #e4eae5; border-radius: 13px; background: rgba(255, 255, 255, .87); box-shadow: 0 8px 26px rgba(32, 58, 47, .025); }
+.sql-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.sql-heading h2 { margin: 7px 0 5px; color: #273b34; font-size: 17px; font-weight: 600; }
+.sql-heading p:last-child { margin: 0; color: #839088; font-size: 11px; line-height: 1.7; }
+.sql-heading > span { flex: 0 0 auto; color: #89968f; font-size: 10px; }
+.sql-examples { display: flex; flex-wrap: wrap; gap: 7px; }
+.sql-examples button, .button-secondary, .button-primary { min-height: 32px; padding: 0 11px; border: 1px solid #e2e9e3; border-radius: 7px; background: #fff; color: #5d7067; font: inherit; font-size: 10px; cursor: pointer; }
+.sql-examples button:hover, .button-secondary:hover { border-color: #b7d2c3; color: #28785f; }
+#sql-editor { width: 100%; min-height: 185px; resize: vertical; padding: 14px; border: 1px solid #dfe8e1; border-radius: 9px; outline: none; background: #172a27; color: #c9e5d7; font-family: 'Cascadia Code', Consolas, monospace; font-size: 12px; line-height: 1.7; tab-size: 2; }
+#sql-editor:focus { border-color: #78b69b; box-shadow: 0 0 0 3px rgba(74, 155, 117, .1); }
+.sql-actions { display: flex; align-items: center; gap: 8px; }
+.button-primary { border-color: #267c66; background: #267c66; color: #fff; }
+.button-primary:hover { background: #1c6c58; }
+.button-primary:disabled, .button-secondary:disabled { opacity: .55; cursor: wait; }
+.query-status { margin-left: 5px; color: #51866d; font-size: 10px; }
+.query-error { margin: 0; padding: 10px 12px; border: 1px solid #f0ddd6; border-radius: 7px; background: #fff8f5; color: #a7614b; font-size: 11px; }
+.query-table-wrap { overflow: auto; max-height: 390px; border: 1px solid #e8ede9; border-radius: 8px; }
+.query-table { width: 100%; border-collapse: collapse; white-space: nowrap; font-size: 10px; }
+.query-table th, .query-table td { padding: 9px 11px; border-bottom: 1px solid #edf1ee; text-align: left; }
+.query-table th { position: sticky; top: 0; background: #f6f9f6; color: #52675c; font-weight: 600; }
+.query-table th small { display: block; margin-top: 3px; color: #a0aaa4; font-size: 8px; font-weight: 400; }
+.query-table td { color: #697970; font-family: 'Cascadia Code', Consolas, monospace; }
+.query-table tr:last-child td { border-bottom: 0; }
+.query-truncated { margin: 0; padding: 9px 11px; color: #8b7857; font-size: 10px; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; clip-path: inset(50%); }
+
 @media (max-width: 820px) {
   .chart-grid { grid-template-columns: 1fr; }
 }
@@ -215,4 +241,8 @@ h1 > span { color: #70817a; font-weight: 400; }
   .chart-caption { max-width: 108px; text-align: right; }
   .chart { height: 210px; }
   .synthetic-banner { align-items: flex-start; padding: 9px; }
+  .sql-workbench { padding: 16px 13px; }
+  .sql-heading { flex-direction: column; }
+  .sql-heading > span { margin-top: -10px; }
+  #sql-editor { min-height: 220px; font-size: 10px; }
 }

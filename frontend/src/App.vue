@@ -40,6 +40,20 @@ interface Overview {
 }
 
 type LoadState = 'loading' | 'ready' | 'error'
+interface QueryColumn { name: string; type: string }
+interface QueryResult { success: boolean; columns: QueryColumn[]; rows: Record<string, unknown>[]; rowCount: number; executionTimeMs: number; truncated: boolean; errorCode: string | null; message: string | null }
+interface ValidationResult { allowed: boolean; errorCode: string | null; message: string | null }
+
+const sqlExamples = [
+  { label: '地区月度实付', sql: "SELECT o.ship_region_name, DATE_FORMAT(p.paid_at, '%Y-%m') AS paid_month, SUM(p.amount) AS paid_amount FROM sales_order o JOIN payment p ON p.order_id = o.order_id WHERE p.status IN ('SUCCEEDED','PARTIALLY_REFUNDED','REFUNDED') AND p.paid_at IS NOT NULL GROUP BY o.ship_region_name, paid_month ORDER BY paid_month, paid_amount DESC" },
+  { label: '品类销售分布', sql: "SELECT c.category_name, SUM(i.line_total) AS sales_amount FROM product_category c JOIN product p ON p.category_id = c.category_id JOIN order_item i ON i.product_id = p.product_id JOIN payment pay ON pay.order_id = i.order_id WHERE pay.status IN ('SUCCEEDED','PARTIALLY_REFUNDED','REFUNDED') GROUP BY c.category_name ORDER BY sales_amount DESC" },
+  { label: '订单与客单价', sql: "SELECT p.status, COUNT(DISTINCT p.order_id) AS order_count, AVG(p.amount) AS average_paid_amount FROM payment p GROUP BY p.status ORDER BY order_count DESC" },
+]
+const sqlText = ref(sqlExamples[0]!.sql)
+const queryBusy = ref(false)
+const queryStatus = ref('')
+const queryError = ref('')
+const queryResult = ref<QueryResult | null>(null)
 
 const loadState = ref<LoadState>('loading')
 const errorMessage = ref('')
@@ -48,6 +62,44 @@ const regionChartElement = ref<HTMLDivElement | null>(null)
 const refundChartElement = ref<HTMLDivElement | null>(null)
 let regionChart: ECharts | undefined
 let refundChart: ECharts | undefined
+
+async function validateSql() {
+  queryBusy.value = true
+  queryError.value = ''
+  queryResult.value = null
+  try {
+    const response = await fetch('/api/v1/query/validate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sql: sqlText.value }) })
+    const result: ValidationResult = await response.json()
+    queryStatus.value = result.allowed ? 'SQL 安全校验通过' : ''
+    if (!result.allowed) queryError.value = result.message ?? 'SQL 未通过安全校验。'
+    return result.allowed
+  } catch {
+    queryError.value = '安全校验服务暂不可用。'
+    return false
+  } finally { queryBusy.value = false }
+}
+
+async function executeSql() {
+  queryBusy.value = true
+  queryError.value = ''
+  queryStatus.value = ''
+  queryResult.value = null
+  try {
+    const response = await fetch('/api/v1/query/execute', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sql: sqlText.value }) })
+    const result: QueryResult = await response.json()
+    queryResult.value = result
+    if (!result.success) queryError.value = result.message ?? '查询执行失败。'
+    else queryStatus.value = `${result.rowCount} 行 · ${result.executionTimeMs} ms${result.truncated ? ' · 已截断' : ''}`
+  } catch {
+    queryError.value = '查询服务暂不可用，请稍后重试。'
+  } finally { queryBusy.value = false }
+}
+
+function displayCell(value: unknown) {
+  if (value === null || value === undefined) return 'NULL'
+  if (typeof value === 'object') return JSON.stringify(value)
+  return String(value)
+}
 
 const money = new Intl.NumberFormat('zh-CN', { style: 'currency', currency: 'CNY', maximumFractionDigits: 0 })
 const integer = new Intl.NumberFormat('zh-CN')
@@ -120,7 +172,7 @@ onBeforeUnmount(() => {
         <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
         <span class="brand-name">DataPilot</span>
       </a>
-      <div class="stage-label"><span></span> 第二阶段 · 合成业务数据</div>
+      <div class="stage-label"><span></span> 第三阶段 · SQL 查询引擎</div>
     </header>
 
     <section id="home" class="hero">
@@ -175,6 +227,19 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="source-note"><strong>数据来源</strong><span>sales_order · payment · order_item · product · product_category · refund</span><small>数据集 {{ overview.datasetCode }} · 生成时间 {{ new Date(overview.generatedAt).toLocaleString('zh-CN') }}</small></div>
+    </section>
+
+    <section class="sql-workbench" aria-label="SQL 查询工作台">
+      <div class="sql-heading"><div><p class="section-kicker">READ ONLY SQL</p><h2>手动查询工作台</h2><p>仅允许访问授权业务表与字段。查询通过服务端 AST 校验，使用只读账号执行。</p></div><span>最多 200 行 · 默认 5 秒</span></div>
+      <div class="sql-examples"><button v-for="example in sqlExamples" :key="example.label" type="button" @click="sqlText = example.sql">{{ example.label }}</button></div>
+      <label class="sr-only" for="sql-editor">SQL 查询语句</label>
+      <textarea id="sql-editor" v-model="sqlText" spellcheck="false" aria-label="SQL 查询编辑器"></textarea>
+      <div class="sql-actions"><button type="button" class="button-secondary" :disabled="queryBusy" @click="validateSql">安全校验</button><button type="button" class="button-primary" :disabled="queryBusy" @click="executeSql">{{ queryBusy ? '查询中…' : '执行查询' }}</button><span v-if="queryStatus" class="query-status" role="status">{{ queryStatus }}</span></div>
+      <p v-if="queryError" class="query-error" role="alert">{{ queryError }}</p>
+      <div v-if="queryResult?.success" class="query-table-wrap">
+        <table class="query-table"><thead><tr><th v-for="column in queryResult.columns" :key="column.name">{{ column.name }}<small>{{ column.type }}</small></th></tr></thead><tbody><tr v-for="(row, rowIndex) in queryResult.rows" :key="rowIndex"><td v-for="column in queryResult.columns" :key="column.name">{{ displayCell(row[column.name]) }}</td></tr></tbody></table>
+        <p v-if="queryResult.truncated" class="query-truncated">结果超过 200 行，已限制返回结果。</p>
+      </div>
     </section>
 
     <footer class="footer">
