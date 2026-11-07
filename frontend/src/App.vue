@@ -43,6 +43,7 @@ type LoadState = 'loading' | 'ready' | 'error'
 interface QueryColumn { name: string; type: string }
 interface QueryResult { success: boolean; columns: QueryColumn[]; rows: Record<string, unknown>[]; rowCount: number; executionTimeMs: number; truncated: boolean; errorCode: string | null; message: string | null }
 interface ValidationResult { allowed: boolean; errorCode: string | null; message: string | null }
+interface AiResponse { success: boolean; clarificationRequired: boolean; intent: string; sql: string; explanation: string; clarificationQuestion: string; validation: ValidationResult | null; queryResult: QueryResult | null; provider: string; model: string; promptVersion: string; modelResponseTimeMs: number; tokenUsage: { promptTokens: number | null; completionTokens: number | null; totalTokens: number | null } | null; repairAttempts: number; errorCode: string | null; message: string | null }
 
 const sqlExamples = [
   { label: '地区月度实付', sql: "SELECT o.ship_region_name, DATE_FORMAT(p.paid_at, '%Y-%m') AS paid_month, SUM(p.amount) AS paid_amount FROM sales_order o JOIN payment p ON p.order_id = o.order_id WHERE p.status IN ('SUCCEEDED','PARTIALLY_REFUNDED','REFUNDED') AND p.paid_at IS NOT NULL GROUP BY o.ship_region_name, paid_month ORDER BY paid_month, paid_amount DESC" },
@@ -54,6 +55,18 @@ const queryBusy = ref(false)
 const queryStatus = ref('')
 const queryError = ref('')
 const queryResult = ref<QueryResult | null>(null)
+const aiQuestions = [
+  '2026 年每个月的实付金额和已支付订单数是多少？',
+  '比较 2026 年 9 月和 10 月各地区实付金额，哪个地区下降最多？',
+  '各商品品类的实付销售金额从高到低怎么排？',
+  '总实付金额、已完成退款金额和净支付金额分别是多少？',
+  '按订单状态统计订单数。',
+]
+const aiQuestion = ref(aiQuestions[0]!)
+const aiBusy = ref(false)
+const aiError = ref('')
+const aiStatus = ref('')
+const aiResult = ref<AiResponse | null>(null)
 
 const loadState = ref<LoadState>('loading')
 const errorMessage = ref('')
@@ -93,6 +106,38 @@ async function executeSql() {
   } catch {
     queryError.value = '查询服务暂不可用，请稍后重试。'
   } finally { queryBusy.value = false }
+}
+
+async function askAi(mode: 'generate' | 'query') {
+  aiBusy.value = true
+  aiError.value = ''
+  aiStatus.value = ''
+  aiResult.value = null
+  if (mode === 'query') queryResult.value = null
+  try {
+    const response = await fetch(`/api/v1/ai/${mode}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: aiQuestion.value }) })
+    const result: AiResponse = await response.json()
+    aiResult.value = result
+    if (result.sql) sqlText.value = result.sql
+    if (result.queryResult) queryResult.value = result.queryResult
+    if (result.clarificationRequired) aiStatus.value = '需要补充问题范围'
+    else if (!result.success) aiError.value = result.message ?? 'AI 分析未完成。'
+    else if (!result.sql) aiStatus.value = '该问题暂时无法映射到授权业务数据。'
+    else if (mode === 'query') {
+      const query = result.queryResult
+      if (query?.success) aiStatus.value = `${query.rowCount} 行 · 查询 ${query.executionTimeMs} ms`
+      else aiError.value = query?.message ?? 'SQL 已生成，但查询未成功。'
+    } else aiStatus.value = result.validation?.allowed ? 'SQL 已生成并通过服务端安全校验，可确认执行。' : 'SQL 未通过安全校验。'
+  } catch {
+    aiError.value = 'AI 服务暂不可用，请检查后端配置并重试。'
+  } finally { aiBusy.value = false }
+}
+
+async function executeGeneratedSql() {
+  if (!aiResult.value?.validation?.allowed || !aiResult.value.sql) return
+  sqlText.value = aiResult.value.sql
+  await executeSql()
+  if (queryResult.value) aiResult.value.queryResult = queryResult.value
 }
 
 function displayCell(value: unknown) {
@@ -172,7 +217,7 @@ onBeforeUnmount(() => {
         <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
         <span class="brand-name">DataPilot</span>
       </a>
-      <div class="stage-label"><span></span> 第三阶段 · SQL 查询引擎</div>
+      <div class="stage-label"><span></span> 第四阶段 · AI Text2SQL</div>
     </header>
 
     <section id="home" class="hero">
@@ -227,6 +272,23 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="source-note"><strong>数据来源</strong><span>sales_order · payment · order_item · product · product_category · refund</span><small>数据集 {{ overview.datasetCode }} · 生成时间 {{ new Date(overview.generatedAt).toLocaleString('zh-CN') }}</small></div>
+    </section>
+
+    <section class="ai-workbench" aria-label="AI 智能分析">
+      <div class="sql-heading"><div><p class="section-kicker">QINIU AI · TEXT2SQL</p><h2>自然语言智能分析</h2><p>模型只生成 SQL；服务端重新校验后才允许只读执行。</p></div><span>最多修复 2 次 · 查询限制沿用安全引擎</span></div>
+      <div class="ai-examples"><button v-for="question in aiQuestions" :key="question" type="button" @click="aiQuestion = question">{{ question }}</button></div>
+      <label class="sr-only" for="ai-question">自然语言分析问题</label>
+      <textarea id="ai-question" v-model="aiQuestion" aria-label="自然语言分析问题" maxlength="500" placeholder="例如：比较 9 月和 10 月各地区实付金额"></textarea>
+      <div class="sql-actions"><button type="button" class="button-secondary" :disabled="aiBusy || !aiQuestion.trim()" @click="askAi('generate')">{{ aiBusy ? '分析中…' : '生成 SQL' }}</button><button type="button" class="button-primary" :disabled="aiBusy || !aiQuestion.trim()" @click="askAi('query')">一键生成并分析</button><span v-if="aiStatus" class="query-status" role="status">{{ aiStatus }}</span></div>
+      <p v-if="aiError" class="query-error" role="alert">{{ aiError }}</p>
+      <article v-if="aiResult" class="ai-answer" aria-live="polite">
+        <div class="ai-meta"><span>{{ aiResult.provider }} / {{ aiResult.model }}</span><span>模型 {{ aiResult.modelResponseTimeMs }} ms</span><span v-if="aiResult.tokenUsage?.totalTokens != null">{{ aiResult.tokenUsage.totalTokens }} tokens</span><span>{{ aiResult.promptVersion }}</span></div>
+        <p v-if="aiResult.intent" class="ai-intent">{{ aiResult.intent }}</p>
+        <p v-if="aiResult.explanation" class="ai-explanation">{{ aiResult.explanation }}</p>
+        <p v-if="aiResult.clarificationRequired" class="ai-clarification">{{ aiResult.clarificationQuestion }}</p>
+        <p v-if="!aiResult.sql && aiResult.message" class="ai-clarification">{{ aiResult.message }}</p>
+        <div v-if="aiResult.sql" class="ai-sql"><span>生成的 SQL</span><pre>{{ aiResult.sql }}</pre><p v-if="aiResult.validation && !aiResult.validation.allowed" class="query-error">{{ aiResult.validation.message }}</p><button v-if="aiResult.validation?.allowed && !aiResult.queryResult" type="button" class="button-primary" :disabled="queryBusy" @click="executeGeneratedSql">确认执行 SQL</button></div>
+      </article>
     </section>
 
     <section class="sql-workbench" aria-label="SQL 查询工作台">

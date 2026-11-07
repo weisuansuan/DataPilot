@@ -2,7 +2,7 @@
 
 An interview-ready, safety-first AI data-analysis application built around verifiable database results. The project is being developed in reviewed, runnable stages.
 
-> **Current stage: Stage 3 — SQL safety and query execution.** The dashboard remains database-backed and labeled synthetic. Manual SQL runs through server-side AST checks and the read-only MySQL account. Model-driven Text2SQL is not active.
+> **Current stage: Stage 4 — Qiniu AI Text2SQL.** The dashboard and manual SQL workbench remain available. Natural-language requests use the backend model client; generated SQL always passes the Stage 3 AST policy and the same read-only executor.
 
 ## Technology
 
@@ -48,6 +48,8 @@ Open two PowerShell terminals from the project root:
 
 Open http://127.0.0.1:5173. The dashboard calls `GET /api/v1/analytics/overview` and displays the response read from MySQL. The SQL workbench provides validation, execution, sample analyses, and a bounded results table.
 
+The AI workbench uses `QINIU_API_KEY` from the Windows user or process environment. The backend must be started after the variable is available. It defaults to Qiniu AI's OpenAI-compatible endpoint `https://api.qnaigc.com/v1` and model `qiniu/conatus-free`; it never sends the key to the browser. Keep the key outside Git and logs. To switch to another OpenAI-compatible provider, set `DATAPILOT_AI_BASE_URL`, `DATAPILOT_AI_MODEL`, and `DATAPILOT_AI_PROVIDER` in the backend process environment.
+
 Apply the versioned aggregate views to an existing local database after updating to this stage:
 
 ```powershell
@@ -73,6 +75,20 @@ The validation endpoint returns `allowed`, `errorCode`, and a safe message. Exec
 
 See [docs/sql-query-safety.md](docs/sql-query-safety.md) for supported SQL, limits, metric definitions, and additional request examples.
 
+## AI Text2SQL API
+
+- `POST /api/v1/ai/generate` — generates SQL and returns its server-side validation; this endpoint does not execute the query.
+- `POST /api/v1/ai/query` — generates, validates, and executes in one request through the existing bounded read-only query service.
+
+Example one-click analysis:
+
+```powershell
+$body = @{ question = "列出 2026 年每月实付金额和已支付订单数" } | ConvertTo-Json
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8080/api/v1/ai/query -ContentType 'application/json' -Body $body
+```
+
+For a user-confirmed flow, call `/api/v1/ai/generate`, inspect `sql` and `validation.allowed`, then place the SQL in the existing SQL workbench and execute it. The `/api/v1/query/execute` endpoint revalidates the SQL independently. See [docs/ai-text2sql.md](docs/ai-text2sql.md) for provider settings, prompt versioning, repair rules, and the 20-question evaluation corpus.
+
 ## Build and test
 
 Run after starting MySQL and seeding the default 100,000-order dataset. This command imports the ignored `.env`, then Maven clean `verify` runs the live-MySQL `*IT` checks for data and reader permissions, followed by the frontend type check and production build.
@@ -85,7 +101,7 @@ The Maven Wrapper downloads and verifies Maven 3.9.16 on its first run. `npm ci`
 
 ## Database and credentials
 
-`scripts/setup-local-env.ps1` creates `.env` from the committed template and generates local database passwords. `.env` is ignored by Git. Never commit it or paste its values into logs. No model key is used in Stage 3; model calls remain disabled until the Text2SQL safety pipeline and evaluation are implemented in Stage 5.
+`scripts/setup-local-env.ps1` creates `.env` from the committed template and generates local database passwords. `.env` is ignored by Git. Never commit it or paste its values into logs. The AI key is read only by the backend from `QINIU_API_KEY`; no model key is stored in `.env`, source files, or frontend assets.
 
 Key files:
 
@@ -95,5 +111,8 @@ Key files:
 - `database/init/002-users.sh`: database-scoped reader and seed accounts.
 - `database/validation/001-business-checks.sql`: payment/refund consistency and expected business trends.
 - `backend/src/main/java/com/datapilot/seed/`: fixed-seed batch generator.
+- `backend/src/main/resources/prompts/text2sql-v1.txt`: versioned system prompt with schema and metric context injected at runtime.
+- `backend/src/test/resources/text2sql/evaluation-v1.json`: 20 natural-language evaluation questions with reference SQL and canonical values.
+- `docs/ai-text2sql.md`: Qiniu configuration, API usage, safety and repair behavior, and evaluation instructions.
 - `docs/troubleshooting.md`: startup and database recovery guidance.
 - `docs/implementation-plan.md`: original scope, accepted decisions, stage checks, and required model-driven Text2SQL closure.

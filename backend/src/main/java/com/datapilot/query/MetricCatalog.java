@@ -2,10 +2,10 @@ package com.datapilot.query;
 
 import java.util.List;
 
-final class MetricCatalog {
+public final class MetricCatalog {
     private MetricCatalog() { }
 
-    static List<QueryController.MetricDefinition> all() {
+    public static List<QueryController.MetricDefinition> all() {
         return List.of(
                 metric("order_count", "订单数", "统计全部合成订单，每个 sales_order 计一笔。", "COUNT(DISTINCT sales_order.order_id)", "无；如需支付订单请使用支付状态过滤", List.of("status", "ship_region_code", "order_date"), List.of("sales_order.order_id", "sales_order.status", "sales_order.ship_region_code", "sales_order.order_date")),
                 metric("gross_paid_amount", "成交金额", "按支付成功时间统计支付本金，不扣除退款。", "SUM(payment.amount)", "payment.status IN ('SUCCEEDED','PARTIALLY_REFUNDED','REFUNDED')；按 paid_at 归期", List.of("paid_at", "ship_region_code", "payment_method"), List.of("payment.amount", "payment.status", "payment.paid_at", "sales_order.ship_region_code")),

@@ -61,6 +61,8 @@ public class QueryService {
             return QueryResponse.failed("QUERY_PLAN_LIMIT", "查询计划成本过高或无法安全评估", elapsed(started));
         } catch (DataAccessException exception) {
             if (hasTimeoutCause(exception)) return QueryResponse.failed("QUERY_TIMEOUT", "查询超过执行时间限制", elapsed(started));
+            if (hasSqlError(exception, 1064)) return QueryResponse.failed("QUERY_SYNTAX_ERROR", "生成的 SQL 语法无法被 MySQL 执行", elapsed(started));
+            if (hasSqlError(exception, 1054, 1052, 1146)) return QueryResponse.failed("QUERY_SCHEMA_ERROR", "生成的 SQL 字段或数据对象与当前授权 schema 不匹配", elapsed(started));
             return QueryResponse.failed("QUERY_FAILED", "数据库无法完成该查询", elapsed(started));
         } catch (Exception exception) {
             return QueryResponse.failed("QUERY_FAILED", "查询执行失败", elapsed(started));
@@ -131,6 +133,14 @@ public class QueryService {
             if (message != null && (message.toLowerCase().contains("timeout")
                     || message.toLowerCase().contains("maximum statement execution time")
                     || message.toLowerCase().contains("statement execution time exceeded"))) return true;
+        }
+        return false;
+    }
+
+    private static boolean hasSqlError(Throwable throwable, int... codes) {
+        for (Throwable cause = throwable; cause != null; cause = cause.getCause()) {
+            if (cause instanceof SQLException sqlException)
+                for (int code : codes) if (sqlException.getErrorCode() == code) return true;
         }
         return false;
     }

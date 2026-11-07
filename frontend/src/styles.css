@@ -203,6 +203,20 @@ h1 > span { color: #70817a; font-weight: 400; }
 .footer i { width: 3px; height: 3px; border-radius: 50%; background: #a6b2aa; }
 
 .sql-workbench { display: grid; gap: 14px; margin-top: 26px; padding: 22px; border: 1px solid #e4eae5; border-radius: 13px; background: rgba(255, 255, 255, .87); box-shadow: 0 8px 26px rgba(32, 58, 47, .025); }
+.ai-workbench { display: grid; gap: 14px; margin-top: 26px; padding: 22px; border: 1px solid #dce8df; border-radius: 13px; background: linear-gradient(145deg, rgba(250, 253, 250, .98), rgba(255, 255, 255, .92)); box-shadow: 0 8px 26px rgba(32, 58, 47, .035); }
+.ai-examples { display: flex; flex-wrap: wrap; gap: 7px; }
+.ai-examples button { min-height: 30px; padding: 5px 10px; border: 1px solid #e2e9e3; border-radius: 7px; background: #fff; color: #607368; font: inherit; font-size: 10px; text-align: left; cursor: pointer; }
+.ai-examples button:hover { border-color: #b7d2c3; color: #28785f; }
+#ai-question { width: 100%; min-height: 82px; resize: vertical; padding: 13px 14px; border: 1px solid #dfe8e1; border-radius: 9px; outline: none; background: #fff; color: #344b40; font: inherit; font-size: 12px; line-height: 1.7; }
+#ai-question:focus { border-color: #78b69b; box-shadow: 0 0 0 3px rgba(74, 155, 117, .1); }
+.ai-answer { display: grid; gap: 10px; padding: 15px; border: 1px solid #e6ede7; border-radius: 9px; background: #fff; }
+.ai-meta { display: flex; flex-wrap: wrap; gap: 8px 14px; color: #8b9890; font-size: 9px; }
+.ai-intent { margin: 0; color: #66756c; font-size: 10px; }
+.ai-explanation { margin: 0; color: #34483e; font-size: 12px; line-height: 1.7; }
+.ai-clarification { margin: 0; color: #98794d; font-size: 12px; }
+.ai-sql { display: grid; gap: 9px; }
+.ai-sql > span { color: #74847a; font-size: 10px; }
+.ai-sql pre { overflow: auto; max-height: 250px; margin: 0; padding: 13px; border-radius: 8px; background: #172a27; color: #c9e5d7; font-family: 'Cascadia Code', Consolas, monospace; font-size: 10px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }
 .sql-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
 .sql-heading h2 { margin: 7px 0 5px; color: #273b34; font-size: 17px; font-weight: 600; }
 .sql-heading p:last-child { margin: 0; color: #839088; font-size: 11px; line-height: 1.7; }

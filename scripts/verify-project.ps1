@@ -4,6 +4,18 @@ $projectRoot = Split-Path -Parent $PSScriptRoot
 Import-DataPilotLocalEnvironment -Exclude @('DATAPILOT_DB_ROOT_PASSWORD', 'DATAPILOT_DB_SEED_PASSWORD')
 
 Push-Location (Join-Path $projectRoot 'backend')
+$previousJavaToolOptions = [Environment]::GetEnvironmentVariable('JAVA_TOOL_OPTIONS', 'Process')
+if ($previousJavaToolOptions -notmatch '(?:^|\s)-Djdk\.net\.unixdomain\.tmpdir(?:=|\s|$)') {
+    $socketDirectory = Join-Path $projectRoot '.runtime\jdk-sockets'
+    [void][System.IO.Directory]::CreateDirectory($socketDirectory)
+    $socketOption = "-Djdk.net.unixdomain.tmpdir=`"$socketDirectory`""
+    $updatedJavaToolOptions = if ([string]::IsNullOrWhiteSpace($previousJavaToolOptions)) {
+        $socketOption
+    } else {
+        "$previousJavaToolOptions $socketOption"
+    }
+    [Environment]::SetEnvironmentVariable('JAVA_TOOL_OPTIONS', $updatedJavaToolOptions, 'Process')
+}
 try {
     & .\mvnw.cmd -B -ntp clean verify
     if ($LASTEXITCODE -ne 0) {
@@ -11,6 +23,7 @@ try {
     }
 }
 finally {
+    [Environment]::SetEnvironmentVariable('JAVA_TOOL_OPTIONS', $previousJavaToolOptions, 'Process')
     Pop-Location
 }
 

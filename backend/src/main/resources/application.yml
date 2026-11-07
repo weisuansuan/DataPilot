@@ -24,6 +24,17 @@ datapilot:
     timeout-seconds: ${DATAPILOT_QUERY_TIMEOUT_SECONDS:5}
     max-concurrency: ${DATAPILOT_QUERY_MAX_CONCURRENCY:4}
     max-plan-cost: ${DATAPILOT_QUERY_MAX_PLAN_COST:10000000}
+  ai:
+    provider: ${DATAPILOT_AI_PROVIDER:qiniu}
+    base-url: ${DATAPILOT_AI_BASE_URL:https://api.qnaigc.com/v1}
+    model: ${DATAPILOT_AI_MODEL:qiniu/conatus-free}
+    api-key: ${QINIU_API_KEY:}
+    stream: ${DATAPILOT_AI_STREAM:true}
+    timeout-seconds: ${DATAPILOT_AI_TIMEOUT_SECONDS:45}
+    max-output-tokens: ${DATAPILOT_AI_MAX_OUTPUT_TOKENS:1200}
+    max-prompt-chars: ${DATAPILOT_AI_MAX_PROMPT_CHARS:12000}
+    max-repair-attempts: ${DATAPILOT_AI_MAX_REPAIR_ATTEMPTS:2}
+    max-concurrency: ${DATAPILOT_AI_MAX_CONCURRENCY:2}
 
 server:
   address: 127.0.0.1

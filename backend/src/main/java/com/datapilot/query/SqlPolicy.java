@@ -95,6 +95,8 @@ public class SqlPolicy {
         }
     }
 
+    public Map<String, Set<String>> allowedColumns() { return COLUMNS; }
+
     private static String normalize(String value) {
         return value == null ? "" : value.replace("`", "").replace("\"", "").toLowerCase(Locale.ROOT);
     }
