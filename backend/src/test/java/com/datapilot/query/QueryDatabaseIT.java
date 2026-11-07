@@ -48,7 +48,7 @@ class QueryDatabaseIT {
         BigDecimal independent = jdbc.queryForObject(
                 "SELECT SUM(amount) FROM payment WHERE status IN ('SUCCEEDED','PARTIALLY_REFUNDED','REFUNDED')", BigDecimal.class);
         assertTrue(response.success(), response.message());
-        assertEquals(independent, response.rows().getFirst().get("paid_amount"));
+        assertEquals(0, independent.compareTo(new BigDecimal(response.rows().getFirst().get("paid_amount").toString())));
     }
 
     @Test

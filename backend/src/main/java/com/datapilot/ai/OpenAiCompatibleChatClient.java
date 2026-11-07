@@ -12,9 +12,13 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.time.Instant;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -23,11 +27,14 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 @Component
 public class OpenAiCompatibleChatClient implements ChatModelClient {
+    private static final Logger log = LoggerFactory.getLogger(OpenAiCompatibleChatClient.class);
     private static final int MAX_RESPONSE_BYTES = 65_536;
     private static final int MAX_CONTENT_CHARS = 48_000;
 
@@ -39,6 +46,10 @@ public class OpenAiCompatibleChatClient implements ChatModelClient {
     private final boolean stream;
     private final int timeoutSeconds;
     private final int maxOutputTokens;
+    private final int maxProviderRetries;
+    private final int maxRetryDelaySeconds;
+    private volatile long blockedUntilEpochMs;
+    private volatile String blockedCategory = "UNKNOWN_429";
 
     public OpenAiCompatibleChatClient(
             @Value("${datapilot.ai.base-url:https://api.qnaigc.com/v1}") String baseUrl,
@@ -46,13 +57,17 @@ public class OpenAiCompatibleChatClient implements ChatModelClient {
             @Value("${datapilot.ai.api-key:}") String apiKey,
             @Value("${datapilot.ai.stream:true}") boolean stream,
             @Value("${datapilot.ai.timeout-seconds:45}") int timeoutSeconds,
-            @Value("${datapilot.ai.max-output-tokens:1200}") int maxOutputTokens) {
+            @Value("${datapilot.ai.max-output-tokens:1200}") int maxOutputTokens,
+            @Value("${datapilot.ai.max-provider-retries:1}") int maxProviderRetries,
+            @Value("${datapilot.ai.max-retry-delay-seconds:5}") int maxRetryDelaySeconds) {
         this.baseUrl = baseUrl.replaceAll("/+$", "");
         this.model = model;
         this.apiKey = apiKey;
         this.stream = stream;
         this.timeoutSeconds = Math.max(1, Math.min(timeoutSeconds, 90));
         this.maxOutputTokens = Math.max(128, Math.min(maxOutputTokens, 4096));
+        this.maxProviderRetries = Math.max(0, Math.min(maxProviderRetries, 2));
+        this.maxRetryDelaySeconds = Math.max(0, Math.min(maxRetryDelaySeconds, 30));
         this.http = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(10))
                 .followRedirects(HttpClient.Redirect.NEVER)
@@ -62,6 +77,13 @@ public class OpenAiCompatibleChatClient implements ChatModelClient {
     @Override
     public Completion complete(String systemPrompt, String userPrompt) {
         if (apiKey == null || apiKey.isBlank()) throw new AiServiceException("AI_NOT_CONFIGURED");
+        long now = System.currentTimeMillis();
+        if (now < blockedUntilEpochMs) {
+            long millis = blockedUntilEpochMs - now;
+            long remaining = Math.max(1, millis / 1000 + (millis % 1000 == 0 ? 0 : 1));
+            throw new AiServiceException("AI_RATE_LIMITED", new AiServiceException.ProviderFailure(
+                    blockedCategory, 429, remaining, 0, null, null));
+        }
         try {
             URI uri = URI.create(baseUrl + "/chat/completions");
             Map<String, Object> body = Map.of(
@@ -72,20 +94,37 @@ public class OpenAiCompatibleChatClient implements ChatModelClient {
                     "max_tokens", maxOutputTokens,
                     "stream", stream);
             String json = mapper.writeValueAsString(body);
-            HttpRequest request = HttpRequest.newBuilder(uri)
-                    .timeout(Duration.ofSeconds(timeoutSeconds))
-                    .header("Authorization", "Bearer " + apiKey)
-                    .header("Content-Type", "application/json")
-                    .header("Accept", stream ? "text/event-stream" : "application/json")
-                    .POST(HttpRequest.BodyPublishers.ofString(json, StandardCharsets.UTF_8))
-                    .build();
-            HttpResponse<InputStream> response = http.send(request, HttpResponse.BodyHandlers.ofInputStream());
-            try (InputStream input = response.body()) {
-                int status = response.statusCode();
-                if (status == 401 || status == 403) throw new AiServiceException("AI_AUTHENTICATION_FAILED");
-                if (status == 429) throw new AiServiceException("AI_RATE_LIMITED");
-                if (status < 200 || status >= 300) throw new AiServiceException("AI_PROVIDER_ERROR");
-                return stream ? readSseWithDeadline(input) : readJsonWithDeadline(input);
+            for (int attempt = 1; ; attempt++) {
+                HttpRequest request = HttpRequest.newBuilder(uri)
+                        .timeout(Duration.ofSeconds(timeoutSeconds))
+                        .header("Authorization", "Bearer " + apiKey)
+                        .header("Content-Type", "application/json")
+                        .header("Accept", stream ? "text/event-stream" : "application/json")
+                        .POST(HttpRequest.BodyPublishers.ofString(json, StandardCharsets.UTF_8))
+                        .build();
+                HttpResponse<InputStream> response = http.send(request, HttpResponse.BodyHandlers.ofInputStream());
+                try (InputStream input = response.body()) {
+                    int status = response.statusCode();
+                    if (status == 401 || status == 403) throw new AiServiceException("AI_AUTHENTICATION_FAILED");
+                    if (status == 429) {
+                        AiServiceException.ProviderFailure failure = providerFailure(response, input, attempt);
+                        long delayMs = retryDelayMillis(failure, attempt);
+                        if (failure.category().equals("REQUEST_RATE") && attempt <= maxProviderRetries && delayMs >= 0) {
+                            Thread.sleep(delayMs);
+                            continue;
+                        }
+                        long cooldownSeconds = blockAfter429(failure);
+                        failure = new AiServiceException.ProviderFailure(failure.category(), failure.status(), cooldownSeconds,
+                                failure.attempts(), failure.remainingRequests(), failure.remainingTokens());
+                        log.warn("AI provider throttled: status={} category={} retryAfterSeconds={} attempts={} remainingRequests={} remainingTokens={}",
+                                failure.status(), failure.category(), failure.retryAfterSeconds(), failure.attempts(),
+                                failure.remainingRequests(), failure.remainingTokens());
+                        throw new AiServiceException("AI_RATE_LIMITED", failure);
+                    }
+                    if (status < 200 || status >= 300) throw new AiServiceException("AI_PROVIDER_ERROR");
+                    blockedUntilEpochMs = 0;
+                    return stream ? readSseWithDeadline(input) : readJsonWithDeadline(input);
+                }
             }
         } catch (AiServiceException exception) {
             throw exception;
@@ -105,6 +144,86 @@ public class OpenAiCompatibleChatClient implements ChatModelClient {
             throw new AiServiceException("AI_INVALID_RESPONSE");
         }
     }
+
+    private long blockAfter429(AiServiceException.ProviderFailure failure) {
+        blockedCategory = failure.category();
+        long defaultSeconds = switch (failure.category()) {
+            case "QUOTA_OR_BILLING", "PROVIDER_GLOBAL_LIMIT" -> 300;
+            case "MODEL_CAPACITY" -> 30;
+            case "REQUEST_RATE" -> 5;
+            default -> 60;
+        };
+        long seconds = failure.retryAfterSeconds() == null || failure.retryAfterSeconds() == 0
+                ? defaultSeconds : failure.retryAfterSeconds();
+        long now = System.currentTimeMillis();
+        blockedUntilEpochMs = seconds > (Long.MAX_VALUE - now) / 1000L ? Long.MAX_VALUE : now + seconds * 1000L;
+        return seconds;
+    }
+
+    private AiServiceException.ProviderFailure providerFailure(HttpResponse<?> response, InputStream body, int attempts) {
+        String code = "";
+        String type = "";
+        try {
+            byte[] bytes = body.readNBytes(8193);
+            if (bytes.length <= 8192) {
+                JsonNode error = mapper.readTree(bytes).get("error");
+                if (error != null) {
+                    code = text(error.get("code"));
+                    type = text(error.get("type"));
+                }
+            }
+        } catch (IOException | RuntimeException ignored) { }
+        String category = classify(code, type);
+        Long retryAfter = retryAfterSeconds(response);
+        Integer remainingRequests = headerInteger(response, "x-ratelimit-remaining-requests", "ratelimit-remaining");
+        Integer remainingTokens = headerInteger(response, "x-ratelimit-remaining-tokens");
+        return new AiServiceException.ProviderFailure(category, response.statusCode(), retryAfter, attempts,
+                remainingRequests, remainingTokens);
+    }
+
+    private static String classify(String code, String type) {
+        String value = (code + " " + type).toLowerCase(java.util.Locale.ROOT);
+        if (value.contains("free_campaign_global_limit") || value.contains("global_limit")) return "PROVIDER_GLOBAL_LIMIT";
+        if (value.contains("insufficient_quota") || value.contains("quota") || value.contains("billing") || value.contains("credit")) return "QUOTA_OR_BILLING";
+        if (value.contains("capacity") || value.contains("overload") || value.contains("busy")) return "MODEL_CAPACITY";
+        if (value.contains("rate_limit") || value.contains("too_many_requests")) return "REQUEST_RATE";
+        return "UNKNOWN_429";
+    }
+
+    private long retryDelayMillis(AiServiceException.ProviderFailure failure, int attempt) {
+        if (failure.category().equals("PROVIDER_GLOBAL_LIMIT") || failure.category().equals("QUOTA_OR_BILLING")
+                || failure.category().equals("MODEL_CAPACITY") || failure.category().equals("UNKNOWN_429")) return -1;
+        long backoff = Math.min(500L << Math.min(attempt - 1, 5), 30_000L);
+        if (failure.retryAfterSeconds() != null) {
+            if (failure.retryAfterSeconds() > maxRetryDelaySeconds) return -1;
+            backoff = Math.max(backoff, failure.retryAfterSeconds() * 1000L);
+        }
+        long jitter = ThreadLocalRandom.current().nextLong(Math.max(1L, backoff / 4 + 1));
+        long delay = backoff + jitter;
+        return delay <= maxRetryDelaySeconds * 1000L ? delay : -1;
+    }
+
+    private static Long retryAfterSeconds(HttpResponse<?> response) {
+        String value = response.headers().firstValue("Retry-After").orElse(null);
+        if (value == null) return null;
+        try { return Math.max(0, Long.parseLong(value.trim())); }
+        catch (NumberFormatException ignored) {
+            try { return Math.max(0, Duration.between(Instant.now(), ZonedDateTime.parse(value, DateTimeFormatter.RFC_1123_DATE_TIME).toInstant()).toSeconds()); }
+            catch (RuntimeException invalid) { return null; }
+        }
+    }
+
+    private static Integer headerInteger(HttpResponse<?> response, String... names) {
+        for (String name : names) {
+            try {
+                String value = response.headers().firstValue(name).orElse(null);
+                if (value != null) return Integer.valueOf(value.trim());
+            } catch (NumberFormatException ignored) { }
+        }
+        return null;
+    }
+
+    private static String text(JsonNode node) { return node == null || !node.isString() ? "" : node.asString(); }
 
     private Completion readSseWithDeadline(InputStream input) throws ExecutionException, InterruptedException, TimeoutException {
         ExecutorService reader = Executors.newVirtualThreadPerTaskExecutor();

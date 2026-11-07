@@ -6,6 +6,7 @@ import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -87,8 +88,13 @@ public class QueryService {
                         List<Map<String, Object>> rows = new ArrayList<>();
                         while (resultSet.next() && rows.size() < MAX_ROWS + 1) {
                             Map<String, Object> row = new LinkedHashMap<>();
-                            for (int index = 1; index <= metadata.getColumnCount(); index++)
-                                row.put(metadata.getColumnLabel(index), resultSet.getObject(index));
+                            for (int index = 1; index <= metadata.getColumnCount(); index++) {
+                                Object value = resultSet.getObject(index);
+                                if (value instanceof BigDecimal decimal) value = decimal.toPlainString();
+                                else if (value instanceof BigInteger integer) value = integer.toString();
+                                else if (value instanceof Long integer) value = integer.toString();
+                                row.put(metadata.getColumnLabel(index), value);
+                            }
                             rows.add(row);
                         }
                         boolean truncated = rows.size() > MAX_ROWS;

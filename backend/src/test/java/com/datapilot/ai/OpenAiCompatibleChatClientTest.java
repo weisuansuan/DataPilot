@@ -10,6 +10,7 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
 class OpenAiCompatibleChatClientTest {
@@ -78,6 +79,73 @@ class OpenAiCompatibleChatClientTest {
     }
 
     @Test
+    void retriesRecognizedRequestRateLimitOnceAndParsesRetryAfter() throws Exception {
+        AtomicInteger calls = new AtomicInteger();
+        try (ServerFixture server = new ServerFixture(exchange -> {
+            if (calls.incrementAndGet() == 1) {
+                exchange.getResponseHeaders().set("Retry-After", "0");
+                respond(exchange, 429, "application/json", """
+                        {"error":{"type":"rate_limit_exceeded_error","code":"rate_limit_exceeded","message":"too many requests"}}
+                        """);
+            } else {
+                respond(exchange, 200, "application/json", """
+                        {"choices":[{"message":{"content":"SELECT 1"}}]}
+                        """);
+            }
+        })) {
+            Completion result = new OpenAiCompatibleChatClient(server.baseUrl(), "model", "test", false, 5, 900, 1, 5)
+                    .complete("system", "question");
+            assertEquals("SELECT 1", result.content());
+            assertEquals(2, calls.get());
+        }
+    }
+
+    @Test
+    void doesNotRetryProviderGlobalLimitAndReturnsOnlySafeMetadata() throws Exception {
+        AtomicInteger calls = new AtomicInteger();
+        try (ServerFixture server = new ServerFixture(exchange -> {
+            calls.incrementAndGet();
+            exchange.getResponseHeaders().set("Retry-After", "0");
+            exchange.getResponseHeaders().set("X-RateLimit-Remaining-Requests", "0");
+            respond(exchange, 429, "application/json", """
+                    {"error":{"type":"rate_limit_exceeded_error","code":"free_campaign_global_limit","message":"private account details"}}
+                    """);
+        })) {
+            OpenAiCompatibleChatClient client = client(server, false, "secret-test-key", 5);
+            AiServiceException error = assertThrows(AiServiceException.class,
+                    () -> client.complete("system", "question"));
+            assertEquals(1, calls.get());
+            assertEquals("PROVIDER_GLOBAL_LIMIT", error.providerFailure().category());
+            assertEquals(0, error.providerFailure().remainingRequests());
+            org.junit.jupiter.api.Assertions.assertFalse(error.getMessage().contains("private"));
+            org.junit.jupiter.api.Assertions.assertFalse(error.getMessage().contains("secret-test-key"));
+            AiServiceException blocked = assertThrows(AiServiceException.class,
+                    () -> client.complete("system", "question again"));
+            assertEquals(1, calls.get());
+            assertEquals("PROVIDER_GLOBAL_LIMIT", blocked.providerFailure().category());
+            assertEquals(300L, blocked.providerFailure().retryAfterSeconds());
+        }
+    }
+
+    @Test
+    void skipsRetryWhenRetryAfterExceedsConfiguredBudget() throws Exception {
+        AtomicInteger calls = new AtomicInteger();
+        try (ServerFixture server = new ServerFixture(exchange -> {
+            calls.incrementAndGet();
+            exchange.getResponseHeaders().set("Retry-After", "20");
+            respond(exchange, 429, "application/json", """
+                    {"error":{"type":"rate_limit_exceeded_error","code":"rate_limit_exceeded"}}
+                    """);
+        })) {
+            AiServiceException error = assertThrows(AiServiceException.class,
+                    () -> new OpenAiCompatibleChatClient(server.baseUrl(), "model", "test", false, 5, 900, 1, 2)
+                            .complete("system", "question"));
+            assertEquals(1, calls.get());
+            assertEquals(20L, error.providerFailure().retryAfterSeconds());
+        }
+    }
+
+    @Test
     void rejectsMissingDoneMarkerAndMissingApiKey() throws Exception {
         try (ServerFixture server = new ServerFixture(exchange -> {
             exchange.getResponseHeaders().set("Content-Type", "text/event-stream");
@@ -88,7 +156,7 @@ class OpenAiCompatibleChatClientTest {
             assertEquals("AI_INVALID_RESPONSE", invalid.errorCode());
         }
         AiServiceException missing = assertThrows(AiServiceException.class,
-                () -> new OpenAiCompatibleChatClient("http://127.0.0.1:1/v1", "model", "", false, 1, 900)
+                    () -> new OpenAiCompatibleChatClient("http://127.0.0.1:1/v1", "model", "", false, 1, 900, 1, 5)
                         .complete("system", "question"));
         assertEquals("AI_NOT_CONFIGURED", missing.errorCode());
     }
@@ -110,7 +178,7 @@ class OpenAiCompatibleChatClientTest {
     }
 
     private OpenAiCompatibleChatClient client(ServerFixture server, boolean stream, String key, int timeout) {
-        return new OpenAiCompatibleChatClient(server.baseUrl(), "qiniu/conatus-free", key, stream, timeout, 900);
+        return new OpenAiCompatibleChatClient(server.baseUrl(), "qiniu/conatus-free", key, stream, timeout, 900, 1, 5);
     }
 
     private static void respond(com.sun.net.httpserver.HttpExchange exchange, int status, String type, String body) throws IOException {

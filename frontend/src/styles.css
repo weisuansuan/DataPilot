@@ -215,7 +215,23 @@ h1 > span { color: #70817a; font-weight: 400; }
 .ai-explanation { margin: 0; color: #34483e; font-size: 12px; line-height: 1.7; }
 .ai-clarification { margin: 0; color: #98794d; font-size: 12px; }
 .ai-sql { display: grid; gap: 9px; }
-.ai-sql > span { color: #74847a; font-size: 10px; }
+.ai-sql summary { color: #74847a; font-size: 10px; cursor: pointer; }
+.provider-limit { margin: 0; padding: 9px 11px; border: 1px solid #eadfcf; border-radius: 7px; background: #fffaf3; color: #88704d; font-size: 10px; line-height: 1.6; }
+.result-visualization { display: grid; gap: 12px; padding-top: 10px; border-top: 1px solid #edf1ee; }
+.result-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.result-toolbar h3 { margin: 5px 0 0; color: #34483e; font-size: 13px; font-weight: 600; }
+.view-switch { display: inline-flex; gap: 3px; padding: 3px; border: 1px solid #e5ebe6; border-radius: 8px; background: #f8faf8; }
+.view-switch button { min-height: 27px; padding: 0 9px; border: 0; border-radius: 6px; background: transparent; color: #728078; font: inherit; font-size: 10px; cursor: pointer; }
+.view-switch button[aria-pressed="true"] { background: #e5f1e9; color: #28785f; }
+.view-switch button:disabled { opacity: .45; cursor: not-allowed; }
+.result-chart { min-height: 270px; margin: 0; }
+.result-kpis { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+.result-insights { display: grid; gap: 8px; padding: 12px; border: 1px solid #e7eee8; border-radius: 8px; background: #f8fbf8; }
+.result-insights .section-kicker { margin: 0; }
+.result-insights article { display: grid; gap: 4px; }
+.result-insights article strong { color: #3d5c4b; font-size: 11px; line-height: 1.65; font-weight: 600; }
+.result-insights article small, .chart-fallback { margin: 0; color: #87938c; font-size: 9px; line-height: 1.6; }
+.empty-result { color: #909b94 !important; text-align: center !important; font-family: inherit !important; }
 .ai-sql pre { overflow: auto; max-height: 250px; margin: 0; padding: 13px; border-radius: 8px; background: #172a27; color: #c9e5d7; font-family: 'Cascadia Code', Consolas, monospace; font-size: 10px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }
 .sql-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
 .sql-heading h2 { margin: 7px 0 5px; color: #273b34; font-size: 17px; font-weight: 600; }

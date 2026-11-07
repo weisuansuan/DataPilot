@@ -2,7 +2,7 @@
 
 An interview-ready, safety-first AI data-analysis application built around verifiable database results. The project is being developed in reviewed, runnable stages.
 
-> **Current stage: Stage 4 — Qiniu AI Text2SQL.** The dashboard and manual SQL workbench remain available. Natural-language requests use the backend model client; generated SQL always passes the Stage 3 AST policy and the same read-only executor.
+> **Stage 5 complete — AI reliability and data visualization.** Text2SQL evaluation, provider cooldowns, result-grounded insights, and deterministic chart recommendations build on the Stage 3 safety policy and Stage 4 Qiniu client. See [stage verification](docs/implementation-plan.md#stage-5-verification-2026-11-07).
 
 ## Technology
 
@@ -30,7 +30,7 @@ Run these commands from the project root in PowerShell. The first command create
 .\scripts\validate-dataset.ps1
 ```
 
-The default seed contains 100,000 orders. On the development machine the fixed-seed batch run completed in about 15 seconds; actual timing depends on the machine. To exercise a larger dataset, pass any count from 10 to 1,000,000, for example `\.\scripts\seed-synthetic-data.ps1 -OrderCount 250000`. Rerunning the seeder replaces rows only in the dedicated `datapilot` schema after checking both its database name and synthetic dataset marker. The named MySQL volume persists across restarts.
+The default seed contains 100,000 orders. On the development machine the fixed-seed batch run completed in about 15 seconds; actual timing depends on the machine. To exercise a larger dataset, pass any count from 10 to 1,000,000, for example `./scripts/seed-synthetic-data.ps1 -OrderCount 250000`. Rerunning the seeder replaces rows only in the dedicated `datapilot` schema after checking both its database name and synthetic dataset marker. The named MySQL volume persists across restarts.
 
 Database accounts are split by purpose: `datapilot_reader` has `SELECT` and metadata-only `SHOW VIEW` on `datapilot.*` and is used by the web application; `datapilot_seed` has only `SELECT`, `INSERT`, `UPDATE`, and `DELETE` on that schema and is used only by the seeder. The MySQL root password is used only inside the database container. Versioned schema files in `database/init/` run when the named volume is first initialized.
 
@@ -71,7 +71,7 @@ $body = @{ sql = "SELECT paid_month, paid_order_count, paid_amount FROM v_monthl
 Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8080/api/v1/query/execute -ContentType 'application/json' -Body $body
 ```
 
-The validation endpoint returns `allowed`, `errorCode`, and a safe message. Execution returns column names and database types, rows, `rowCount`, `executionTimeMs`, and `truncated`. It returns controlled error codes such as `SQL_PARSE_ERROR`, `UNAUTHORIZED_TABLE`, `UNAUTHORIZED_COLUMN`, `QUERY_PLAN_LIMIT`, `QUERY_TIMEOUT`, and `QUERY_BUSY`; it does not return SQL or database exception text.
+The validation endpoint returns `allowed`, `errorCode`, and a safe message. Execution returns column names and database types, rows, `rowCount`, `executionTimeMs`, and `truncated`. DECIMAL and BIGINT values in rows are decimal strings to preserve precision in browser JSON clients. It returns controlled error codes such as `SQL_PARSE_ERROR`, `UNAUTHORIZED_TABLE`, `UNAUTHORIZED_COLUMN`, `QUERY_PLAN_LIMIT`, `QUERY_TIMEOUT`, and `QUERY_BUSY`; it does not return SQL or database exception text.
 
 See [docs/sql-query-safety.md](docs/sql-query-safety.md) for supported SQL, limits, metric definitions, and additional request examples.
 
@@ -89,12 +89,28 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8080/api/v1/ai/query -Conte
 
 For a user-confirmed flow, call `/api/v1/ai/generate`, inspect `sql` and `validation.allowed`, then place the SQL in the existing SQL workbench and execute it. The `/api/v1/query/execute` endpoint revalidates the SQL independently. See [docs/ai-text2sql.md](docs/ai-text2sql.md) for provider settings, prompt versioning, repair rules, and the 20-question evaluation corpus.
 
+## Reliability evaluation and charts
+
+Run the offline, no-provider 20-question workflow against local MySQL:
+
+```powershell
+.\scripts\evaluate-text2sql.ps1 -Mode mock
+```
+
+The deterministic fixture exercises AST validation, bounded MySQL execution, and exact result comparison. Reports are written under `.runtime/evaluations/` and do not represent live-model accuracy. Credentialed live evaluation supports at most five calls, waits between calls, disables model/provider retries, and stops after a 429:
+
+```powershell
+.\scripts\evaluate-text2sql.ps1 -Mode live -MaxCalls 3 -IntervalSeconds 10
+```
+
+See [docs/text2sql-evaluation.md](docs/text2sql-evaluation.md) for denominators and [docs/ai-visualization.md](docs/ai-visualization.md) for chart selection, numeric fallbacks, and result-grounded conclusions. Frontend rule tests run with `npm run test:unit` from `frontend`.
+
 ## Build and test
 
 Run after starting MySQL and seeding the default 100,000-order dataset. This command imports the ignored `.env`, then Maven clean `verify` runs the live-MySQL `*IT` checks for data and reader permissions, followed by the frontend type check and production build.
 
 ```powershell
-\.\scripts\verify-project.ps1
+.\scripts\verify-project.ps1
 ```
 
 The Maven Wrapper downloads and verifies Maven 3.9.16 on its first run. `npm ci` installs the committed `package-lock.json` exactly.
@@ -112,7 +128,9 @@ Key files:
 - `database/validation/001-business-checks.sql`: payment/refund consistency and expected business trends.
 - `backend/src/main/java/com/datapilot/seed/`: fixed-seed batch generator.
 - `backend/src/main/resources/prompts/text2sql-v1.txt`: versioned system prompt with schema and metric context injected at runtime.
-- `backend/src/test/resources/text2sql/evaluation-v1.json`: 20 natural-language evaluation questions with reference SQL and canonical values.
+- `backend/src/main/resources/text2sql/evaluation-v1.json`: 20 natural-language evaluation questions with reference SQL and canonical values.
 - `docs/ai-text2sql.md`: Qiniu configuration, API usage, safety and repair behavior, and evaluation instructions.
+- `docs/text2sql-evaluation.md`: bounded offline/live evaluation, metric definitions, and result comparison.
+- `docs/ai-visualization.md`: deterministic chart recommendations and data-backed insight rules.
 - `docs/troubleshooting.md`: startup and database recovery guidance.
 - `docs/implementation-plan.md`: original scope, accepted decisions, stage checks, and required model-driven Text2SQL closure.

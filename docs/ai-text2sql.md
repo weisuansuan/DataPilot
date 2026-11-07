@@ -22,6 +22,8 @@ Configuration overrides:
 | `DATAPILOT_AI_MAX_PROMPT_CHARS` | `12000` | System-context character cap |
 | `DATAPILOT_AI_MAX_REPAIR_ATTEMPTS` | `2` | Maximum repairs after the initial generation (0–2) |
 | `DATAPILOT_AI_MAX_CONCURRENCY` | `2` | Concurrent model requests (1–4) |
+| `DATAPILOT_AI_MAX_PROVIDER_RETRIES` | `1` | Bounded retries for recognized request-rate 429 responses (0–2) |
+| `DATAPILOT_AI_MAX_RETRY_DELAY_SECONDS` | `5` | Maximum backoff before a provider retry (0–30 seconds) |
 
 ## Request flow
 
@@ -36,7 +38,13 @@ The model is never trusted to authorize its own output. The prompt is a usabilit
 
 At most two additional model requests are made for parser errors or safe, generic MySQL syntax/schema execution errors. Each repaired SQL string is parsed and checked again before it can execute. Only a sanitized category is added to the system prompt; raw JDBC exceptions and server details are not sent to the model.
 
-No repair is attempted for `UNAUTHORIZED_TABLE`, `UNAUTHORIZED_COLUMN`, `UNAUTHORIZED_FUNCTION`, other SQL policy denials, plan-cost rejections, timeouts, busy queries, authentication failures, rate limits, invalid JSON, empty output, or provider errors. These return a structured error. The HTTP client does not retry provider calls automatically.
+No repair is attempted for `UNAUTHORIZED_TABLE`, `UNAUTHORIZED_COLUMN`, `UNAUTHORIZED_FUNCTION`, other SQL policy denials, plan-cost rejections, timeouts, busy queries, authentication failures, rate limits, invalid JSON, empty output, or provider errors. These return a structured error.
+
+Provider HTTP 429 responses are parsed only for a bounded JSON error code/type and an allowlist of `Retry-After` and remaining request/token headers. Raw provider bodies and arbitrary headers are not logged or returned. Categories include request rate, quota/billing, model capacity, provider global limit, and unknown. Only recognized request-rate errors may receive the configured finite retry count; `Retry-After` is respected only within the configured wait cap. Backoff uses exponential delay and jitter. After a final 429, an in-memory cooldown prevents repeated calls (300 seconds for quota/global limits, 30 seconds for capacity, 5 seconds for request rate, and 60 seconds when unknown); a provider `Retry-After` value takes precedence. The API and UI return safe category/status/wait details. Cooldown is process-local and resets when the backend restarts.
+
+On 2026-11-07 one Qiniu diagnostic request returned HTTP 429, provider type `rate_limit_exceeded_error`, code `free_campaign_global_limit`, and none of the inspected `Retry-After` or standard rate-limit headers. This establishes a provider global limit, but does not prove whether the underlying cause is request frequency, quota/campaign policy, or model capacity. This category is not retried.
+
+The Stage 5 browser smoke test also received a model response that the strict Text2SQL parser could not accept. The API returned the controlled `AI_INVALID_RESPONSE` state and executed no SQL. No immediate retry was made. A separate SSE evaluation request succeeded end to end for Q01; online evidence is intentionally limited and is recorded in [text2sql-evaluation.md](text2sql-evaluation.md).
 
 ## API examples
 
@@ -59,8 +67,12 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8080/api/v1/ai/query -Conte
 
 Responses include intent, SQL and explanation, validation, provider/model, prompt version, model time, repair count, optional token usage, and (for `/ai/query`) columns/types, rows, query time, row count, truncation, and controlled error details.
 
+The query API serializes DECIMAL and BIGINT values as decimal strings so browser JSON parsing cannot silently round monetary values or large integers. The column metadata retains the original MySQL type; chart recommendations convert only values within JavaScript's safe numeric range.
+
 ## Evaluation corpus
 
-`backend/src/test/resources/text2sql/evaluation-v1.json` contains 20 Chinese business questions with metric IDs, reference SQL, output columns, and canonical values for core totals. `Text2SqlEvaluationCorpusTest` checks uniqueness and that every reference query passes the same SQL policy. `Text2SqlEvaluationDatabaseIT` runs all 20 reference queries against the real seeded MySQL database and verifies output shape plus exact canonical totals for orders, paid orders, paid principal, refunds, and net paid principal.
+`backend/src/main/resources/text2sql/evaluation-v1.json` contains 20 Chinese business questions with metric IDs, reference SQL, output columns, and canonical values for core totals. `Text2SqlEvaluationCorpusTest` checks uniqueness and that every reference query passes the same SQL policy. `Text2SqlEvaluationDatabaseIT` runs all 20 reference queries against the real seeded MySQL database and verifies output shape plus exact canonical totals for orders, paid orders, paid principal, refunds, and net paid principal.
 
-This is a reference-query corpus and database-semantic check, not a claim that a live model has achieved 20/20 semantic accuracy. Mock client and orchestration tests are repeatable and do not incur model charges. Live evaluations must compare model results to this reference corpus and report unsupported/clarification cases separately.
+This is a reference-query corpus and database-semantic check, not a claim that a live model has achieved 20/20 semantic accuracy. See [text2sql-evaluation.md](text2sql-evaluation.md) for bounded offline/live runs and score definitions. Mock client and orchestration tests are repeatable and do not incur model charges.
+
+AI query results can be charted and summarized deterministically using the executed rows; see [ai-visualization.md](ai-visualization.md).

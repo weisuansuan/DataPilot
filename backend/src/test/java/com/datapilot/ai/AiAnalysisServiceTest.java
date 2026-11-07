@@ -15,6 +15,10 @@ import com.datapilot.query.QueryService;
 import com.datapilot.query.SqlPolicy;
 import java.util.ArrayDeque;
 import java.util.Deque;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import org.springframework.core.io.DefaultResourceLoader;
 
@@ -108,6 +112,49 @@ class AiAnalysisServiceTest {
         assertEquals(1, result.repairAttempts());
         assertEquals(2, model.calls);
         verify(queryService, org.mockito.Mockito.times(2)).execute("SELECT COUNT(*) AS order_count FROM sales_order");
+    }
+
+    @Test
+    void coalescesConcurrentDuplicateQuestionsIntoOneModelRequest() throws Exception {
+        AtomicInteger calls = new AtomicInteger();
+        CountDownLatch modelStarted = new CountDownLatch(1);
+        CountDownLatch finishModel = new CountDownLatch(1);
+        ChatModelClient model = (system, question) -> {
+            calls.incrementAndGet();
+            modelStarted.countDown();
+            try { assertTrue(finishModel.await(3, TimeUnit.SECONDS)); }
+            catch (InterruptedException exception) { Thread.currentThread().interrupt(); throw new IllegalStateException(exception); }
+            return new Completion(json("SELECT COUNT(*) AS order_count FROM sales_order"), null);
+        };
+        AiAnalysisService service = service(model);
+        var executor = Executors.newFixedThreadPool(2);
+        try {
+            var first = executor.submit(() -> service.generate("统计 订单总数"));
+            assertTrue(modelStarted.await(2, TimeUnit.SECONDS));
+            var duplicate = executor.submit(() -> service.generate("统计   订单总数"));
+            Thread.sleep(50);
+            assertFalse(duplicate.isDone());
+            finishModel.countDown();
+            assertTrue(first.get(2, TimeUnit.SECONDS).success());
+            assertTrue(duplicate.get(2, TimeUnit.SECONDS).success());
+            assertEquals(1, calls.get());
+        } finally {
+            finishModel.countDown();
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void exposesSafeProviderLimitMetadataWithoutExecutingSql() {
+        ChatModelClient model = (system, question) -> { throw new AiServiceException("AI_RATE_LIMITED",
+                new AiServiceException.ProviderFailure("PROVIDER_GLOBAL_LIMIT", 429, 300L, 1, 0, null)); };
+        var result = service(model).query("统计订单总数");
+        assertFalse(result.success());
+        assertEquals("AI_RATE_LIMITED", result.errorCode());
+        assertEquals("PROVIDER_GLOBAL_LIMIT", result.providerFailure().category());
+        assertEquals(300L, result.providerFailure().retryAfterSeconds());
+        assertTrue(result.message().contains("提供方全局限制"));
+        verify(queryService, never()).execute(org.mockito.ArgumentMatchers.anyString());
     }
 
     private AiAnalysisService service(ChatModelClient model) {

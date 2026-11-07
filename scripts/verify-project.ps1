@@ -29,6 +29,8 @@ finally {
 
 Push-Location (Join-Path $projectRoot 'frontend')
 try {
+    & npm.cmd run test:unit
+    if ($LASTEXITCODE -ne 0) { throw "Frontend unit tests failed with exit code $LASTEXITCODE." }
     & npm.cmd run typecheck
     if ($LASTEXITCODE -ne 0) { throw "Frontend type check failed with exit code $LASTEXITCODE." }
     & npm.cmd run build
