@@ -14,52 +14,63 @@ import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 @Service
 public class AiAnalysisService {
-    private final ChatModelClient modelClient;
+    private final AiModelRegistry modelRegistry;
     private final Text2SqlPromptBuilder promptBuilder;
     private final Text2SqlOutputParser outputParser = new Text2SqlOutputParser();
     private final SqlPolicy policy;
     private final QueryService queryService;
-    private final String provider;
     private final int maxRepairAttempts;
     private final Semaphore concurrency;
     private final ConcurrentHashMap<String, CompletableFuture<AiResponse>> inFlight = new ConcurrentHashMap<>();
 
-    public AiAnalysisService(ChatModelClient modelClient, Text2SqlPromptBuilder promptBuilder,
+    @Autowired
+    public AiAnalysisService(AiModelRegistry modelRegistry, Text2SqlPromptBuilder promptBuilder,
             SqlPolicy policy, QueryService queryService,
-            @Value("${datapilot.ai.provider:qiniu}") String provider,
             @Value("${datapilot.ai.max-repair-attempts:2}") int maxRepairAttempts,
             @Value("${datapilot.ai.max-concurrency:2}") int maxConcurrency) {
-        this.modelClient = modelClient;
+        this.modelRegistry = modelRegistry;
         this.promptBuilder = promptBuilder;
         this.policy = policy;
         this.queryService = queryService;
-        this.provider = provider;
         this.maxRepairAttempts = Math.max(0, Math.min(maxRepairAttempts, 2));
         this.concurrency = new Semaphore(Math.max(1, Math.min(maxConcurrency, 4)));
     }
 
-    public AiResponse generate(String question) { return singleFlight(question, false); }
-    public AiResponse query(String question) { return singleFlight(question, true); }
+    public AiAnalysisService(ChatModelClient modelClient, Text2SqlPromptBuilder promptBuilder,
+            SqlPolicy policy, QueryService queryService, String provider, int maxRepairAttempts, int maxConcurrency) {
+        this(AiModelRegistry.fixed(provider, modelClient), promptBuilder, policy, queryService, maxRepairAttempts, maxConcurrency);
+    }
 
-    private AiResponse singleFlight(String question, boolean execute) {
-        String key = (execute ? "query:" : "generate:") + question.trim().replaceAll("\\s+", " ").toLowerCase(Locale.ROOT);
+    public AiResponse generate(String question) { return generate(question, null); }
+    public AiResponse query(String question) { return query(question, null); }
+    public AiResponse generate(String question, String modelId) { return singleFlight(question, modelId, false); }
+    public AiResponse query(String question, String modelId) { return singleFlight(question, modelId, true); }
+
+    private AiResponse singleFlight(String question, String modelId, boolean execute) {
+        AiModelRegistry.Selection selection = modelRegistry.resolve(modelId);
+        if (selection == null) return new AiResponse(false, false, "", "", "", "", null, null,
+                "", "", Text2SqlPromptBuilder.VERSION, 0, null, 0, "AI_MODEL_NOT_AVAILABLE",
+                "所选模型未配置或当前不可用", null);
+        String key = selection.id() + ":" + (execute ? "query:" : "generate:")
+                + question.trim().replaceAll("\\s+", " ").toLowerCase(Locale.ROOT);
         CompletableFuture<AiResponse> current = new CompletableFuture<>();
         CompletableFuture<AiResponse> active = inFlight.putIfAbsent(key, current);
         if (active != null) {
             try { return active.get(300, TimeUnit.SECONDS); }
             catch (InterruptedException exception) {
                 Thread.currentThread().interrupt();
-                return failed("AI_CANCELLED", "AI 分析已取消", 0, 0, null, null, null);
+                return failed("AI_CANCELLED", "AI 分析已取消", 0, 0, null, null, null, selection);
             } catch (ExecutionException | TimeoutException exception) {
-                return failed("AI_BUSY", "相同问题正在处理中，请稍后查看结果", 0, 0, null, null, null);
+                return failed("AI_BUSY", "相同问题正在处理中，请稍后查看结果", 0, 0, null, null, null, selection);
             }
         }
         try {
-            AiResponse response = analyze(question, execute);
+            AiResponse response = analyze(question, execute, selection);
             current.complete(response);
             return response;
         } catch (RuntimeException exception) {
@@ -70,19 +81,19 @@ public class AiAnalysisService {
         }
     }
 
-    private AiResponse analyze(String question, boolean execute) {
+    private AiResponse analyze(String question, boolean execute, AiModelRegistry.Selection selection) {
         boolean acquired = false;
         long modelElapsed = 0;
         try {
             acquired = concurrency.tryAcquire(100, TimeUnit.MILLISECONDS);
-            if (!acquired) return failed("AI_BUSY", "AI 分析繁忙，请稍后重试", 0, 0, null, null, null);
+            if (!acquired) return failed("AI_BUSY", "AI 分析繁忙，请稍后重试", 0, 0, null, null, null, selection);
             String basePrompt = promptBuilder.systemPrompt();
             String repairInstruction = "";
             UsageAccumulator usage = new UsageAccumulator();
             for (int attempt = 0; attempt <= maxRepairAttempts; attempt++) {
                 long callStarted = System.nanoTime();
                 Completion completion;
-                try { completion = modelClient.complete(basePrompt + repairInstruction, question); }
+                try { completion = selection.client().complete(basePrompt + repairInstruction, question, selection.model()); }
                 finally { modelElapsed += elapsed(callStarted); }
                 usage.add(completion.tokenUsage());
                 Text2SqlOutput output;
@@ -90,15 +101,15 @@ public class AiAnalysisService {
                     output = outputParser.parse(completion.content());
                 } catch (RuntimeException exception) {
                     return failed("AI_INVALID_RESPONSE", "模型返回内容无法解析，请调整问题后重试", modelElapsed, attempt,
-                            usage.value(), null, null);
+                            usage.value(), null, null, selection);
                 }
                 if (output.clarificationRequired())
                     return new AiResponse(true, true, output.intent(), "", output.explanation(), output.clarificationQuestion(),
-                            null, null, provider, modelClient.model(), Text2SqlPromptBuilder.VERSION,
+                            null, null, selection.provider(), selection.model(), Text2SqlPromptBuilder.VERSION,
                             modelElapsed, usage.value(), attempt, null, null, null);
                 if (output.sql().isBlank())
                     return new AiResponse(true, false, output.intent(), "", output.explanation(), "",
-                            null, null, provider, modelClient.model(), Text2SqlPromptBuilder.VERSION,
+                            null, null, selection.provider(), selection.model(), Text2SqlPromptBuilder.VERSION,
                             modelElapsed, usage.value(), attempt, null, output.reason(), null);
 
                 SqlPolicy.Validation validation = policy.validate(output.sql());
@@ -108,37 +119,37 @@ public class AiAnalysisService {
                         continue;
                     }
                     return new AiResponse(false, false, output.intent(), output.sql(), output.explanation(), "",
-                            validation, null, provider, modelClient.model(), Text2SqlPromptBuilder.VERSION,
+                            validation, null, selection.provider(), selection.model(), Text2SqlPromptBuilder.VERSION,
                             modelElapsed, usage.value(), attempt, "SQL_REJECTED", validation.message(), null);
                 }
                 if (!execute)
                     return new AiResponse(true, false, output.intent(), output.sql(), output.explanation(), "",
-                            validation, null, provider, modelClient.model(), Text2SqlPromptBuilder.VERSION,
+                            validation, null, selection.provider(), selection.model(), Text2SqlPromptBuilder.VERSION,
                             modelElapsed, usage.value(), attempt, null, null, null);
 
                 QueryService.QueryResponse query = queryService.execute(output.sql());
                 if (query.success())
                     return new AiResponse(true, false, output.intent(), output.sql(), output.explanation(), "",
-                            validation, query, provider, modelClient.model(), Text2SqlPromptBuilder.VERSION,
+                            validation, query, selection.provider(), selection.model(), Text2SqlPromptBuilder.VERSION,
                             modelElapsed, usage.value(), attempt, null, null, null);
                 if (isRepairableExecutionError(query.errorCode()) && attempt < maxRepairAttempts) {
                     repairInstruction = "\nThe previous candidate passed the SQL policy but the database reported a schema or MySQL syntax mismatch. Correct the query using only the supplied allowlisted schema and metrics. Do not alter, bypass, or weaken any safety rule.";
                     continue;
                 }
                 return new AiResponse(false, false, output.intent(), output.sql(), output.explanation(), "",
-                        validation, query, provider, modelClient.model(), Text2SqlPromptBuilder.VERSION,
+                        validation, query, selection.provider(), selection.model(), Text2SqlPromptBuilder.VERSION,
                         modelElapsed, usage.value(), attempt, query.errorCode(), query.message(), null);
             }
             return failed("AI_REPAIR_EXHAUSTED", "SQL 自动修复次数已用尽，请调整问题后重试", modelElapsed,
-                    maxRepairAttempts, usage.value(), null, null);
+                    maxRepairAttempts, usage.value(), null, null, selection);
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
-            return failed("AI_CANCELLED", "AI 分析已取消", modelElapsed, 0, null, null, null);
+            return failed("AI_CANCELLED", "AI 分析已取消", modelElapsed, 0, null, null, null, selection);
         } catch (AiServiceException exception) {
             return failed(exception.errorCode(), safeMessage(exception), modelElapsed, 0, null, null, null,
-                    exception.providerFailure());
+                    exception.providerFailure(), selection);
         } catch (RuntimeException exception) {
-            return failed("AI_FAILED", "AI 分析未能完成，请稍后重试", modelElapsed, 0, null, null, null);
+            return failed("AI_FAILED", "AI 分析未能完成，请稍后重试", modelElapsed, 0, null, null, null, selection);
         } finally {
             if (acquired) concurrency.release();
         }
@@ -149,21 +160,21 @@ public class AiAnalysisService {
     }
 
     private AiResponse failed(String code, String message, long modelElapsed, int attempts, TokenUsage usage,
-            SqlPolicy.Validation validation, QueryService.QueryResponse query) {
-        return failed(code, message, modelElapsed, attempts, usage, validation, query, null);
+            SqlPolicy.Validation validation, QueryService.QueryResponse query, AiModelRegistry.Selection selection) {
+        return failed(code, message, modelElapsed, attempts, usage, validation, query, null, selection);
     }
 
     private AiResponse failed(String code, String message, long modelElapsed, int attempts, TokenUsage usage,
             SqlPolicy.Validation validation, QueryService.QueryResponse query,
-            AiServiceException.ProviderFailure providerFailure) {
-        return new AiResponse(false, false, "", "", "", "", validation, query, provider,
-                modelClient.model(), Text2SqlPromptBuilder.VERSION, modelElapsed, usage, attempts,
+            AiServiceException.ProviderFailure providerFailure, AiModelRegistry.Selection selection) {
+        return new AiResponse(false, false, "", "", "", "", validation, query, selection.provider(),
+                selection.model(), Text2SqlPromptBuilder.VERSION, modelElapsed, usage, attempts,
                 code, message, providerFailure);
     }
 
     private static String safeMessage(AiServiceException exception) {
         return switch (exception.errorCode()) {
-            case "AI_NOT_CONFIGURED" -> "未配置模型 API Key；请在后端环境变量中设置 QINIU_API_KEY。";
+            case "AI_NOT_CONFIGURED" -> "未配置所选模型的 API Key，请检查后端环境变量。";
             case "AI_AUTHENTICATION_FAILED" -> "模型服务认证失败，请检查后端 API Key 配置。";
             case "AI_RATE_LIMITED" -> switch (exception.providerFailure() == null ? "UNKNOWN_429" : exception.providerFailure().category()) {
                 case "REQUEST_RATE" -> "模型服务请求频率受限，请按提示等待后再试。";

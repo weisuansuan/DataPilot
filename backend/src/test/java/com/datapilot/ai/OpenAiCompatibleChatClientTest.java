@@ -37,6 +37,32 @@ class OpenAiCompatibleChatClientTest {
     }
 
     @Test
+    void usesOnlyTheExplicitlySelectedModelId() throws Exception {
+        AtomicReference<String> requestBody = new AtomicReference<>();
+        try (ServerFixture server = new ServerFixture(exchange -> {
+            requestBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            respond(exchange, 200, "application/json", """
+                    {"choices":[{"message":{"content":"SELECT 1"}}]}
+                    """);
+        })) {
+            client(server, false, "test-key", 5).complete("system", "question", "qwen-3.8-27b");
+            var request = new tools.jackson.databind.ObjectMapper().readTree(requestBody.get());
+            assertEquals("qwen-3.8-27b", request.get("model").asString());
+        }
+    }
+
+    @Test
+    void discoversAvailableModelIdsAndIgnoresUnavailableOrMalformedEntries() throws Exception {
+        try (ServerFixture server = new ServerFixture(exchange -> respond(exchange, 200, "application/json", """
+                {"data":[{"id":"auto","available":true},{"id":"offline","available":false},
+                {"id":"bad model","available":true},{"id":"qwen-3.8-27b"}]}
+                """))) {
+            var client = new OpenAiCompatibleChatClient(server.baseUrl(), "auto", "test-key", false, 5, 900, 0, 1);
+            assertEquals(java.util.List.of("auto", "qwen-3.8-27b"), client.availableModels());
+        }
+    }
+
+    @Test
     void assemblesSseDeltasUntilDoneAndReadsUsage() throws Exception {
         try (ServerFixture server = new ServerFixture(exchange -> {
             exchange.getResponseHeaders().set("Content-Type", "text/event-stream");
@@ -51,6 +77,24 @@ class OpenAiCompatibleChatClientTest {
             Completion result = client(server, true, "secret-test-key", 5).complete("system", "question");
             assertEquals("SELECT COUNT(*) FROM sales_order", result.content());
             assertEquals(18, result.tokenUsage().totalTokens());
+        }
+    }
+
+    @Test
+    void ignoresReasoningChunksAndCollectsOnlyTheFinalAnswerFromSse() throws Exception {
+        try (ServerFixture server = new ServerFixture(exchange -> {
+            exchange.getResponseHeaders().set("Content-Type", "text/event-stream");
+            exchange.sendResponseHeaders(200, 0);
+            String events = "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"private reasoning\"}}]}\n\n"
+                    + "data: {\"choices\":[{\"delta\":{\"content\":\"{\\\"sql\\\":\\\"SELECT 1\\\"}\"}}]}\n\n"
+                    + "data: [DONE]\n\n";
+            exchange.getResponseBody().write(events.getBytes(StandardCharsets.UTF_8));
+            exchange.close();
+        })) {
+            Completion result = new OpenAiCompatibleChatClient(server.baseUrl(), "moonshotai/Kimi-K3.1-Pro",
+                    "test-token", true, 5, 900, 0, 1).complete("system", "question");
+            assertEquals("{\"sql\":\"SELECT 1\"}", result.content());
+            org.junit.jupiter.api.Assertions.assertFalse(result.content().contains("private reasoning"));
         }
     }
 
@@ -196,6 +240,7 @@ class OpenAiCompatibleChatClientTest {
         ServerFixture(Handler handler) throws IOException {
             server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
             server.createContext("/v1/chat/completions", handler::handle);
+            server.createContext("/v1/models", handler::handle);
             server.start();
         }
         String baseUrl() { return "http://127.0.0.1:" + server.getAddress().getPort() + "/v1"; }

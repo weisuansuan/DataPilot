@@ -83,6 +83,13 @@ Do not execute SQL because it starts with `SELECT`. Require full SQL AST parsing
 
 Online semantic accuracy beyond the single successful live sample remains unknown because Qiniu returned a provider-global 429 on limited attempts and one subsequent browser response was invalid. Continue live evaluation only within explicit call limits and once provider availability permits; do not treat the offline 20/20 result as online-model accuracy.
 
+## Follow-up changes and verification (2026-11-18)
+
+- Added a model registry and workbench selector for configured Qiniu, FreeLLMAPI local models discovered from `/models`, and ModelScope Kimi; provider credentials remain backend-only. Added Chinese user/setup documentation and updated provider/API guidance.
+- Backend unit tests: **40 passed** with the repository's process-scoped `-Djdk.net.unixdomain.tmpdir` workaround. Frontend unit tests: **8 passed**; TypeScript type check and production build passed (entry JavaScript 84.62 kB; largest chart chunk 370.11 kB).
+- Full `scripts/verify-project.ps1` was attempted. Its 10 MySQL integration tests could not pass because Docker Desktop's Linux engine pipe was absent and `scripts/start-mysql.ps1` could not start the database. The Docker Desktop executable was not present at the standard install paths. No schema or synthetic business rows were changed.
+- Online Text2SQL evaluation was not run in this follow-up because the seeded MySQL service was unavailable; the historical limited live result above remains the only recorded online evidence. Resume with Docker Desktop running, validate the dataset, then use `scripts/evaluate-text2sql.ps1 -Mode live -MaxCalls 5` to preserve the call cap.
+
 ## Operational boundaries
 
 Run project commands from Windows PowerShell using the root scripts and `backend/mvnw.cmd`. Keep services on loopback for local development. A failure in an earlier gate pauses dependent stage work and is recorded with the command, actual output and next action. Do not silently skip tests or report unrun checks as passing. Offline fixture accuracy does not imply live-model semantic accuracy.

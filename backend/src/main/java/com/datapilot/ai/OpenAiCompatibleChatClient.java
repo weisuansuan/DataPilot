@@ -16,6 +16,7 @@ import java.time.Instant;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ThreadLocalRandom;
@@ -76,7 +77,14 @@ public class OpenAiCompatibleChatClient implements ChatModelClient {
 
     @Override
     public Completion complete(String systemPrompt, String userPrompt) {
+        return complete(systemPrompt, userPrompt, model);
+    }
+
+    @Override
+    public Completion complete(String systemPrompt, String userPrompt, String selectedModel) {
         if (apiKey == null || apiKey.isBlank()) throw new AiServiceException("AI_NOT_CONFIGURED");
+        if (selectedModel == null || !selectedModel.matches("[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}"))
+            throw new AiServiceException("AI_MODEL_NOT_AVAILABLE");
         long now = System.currentTimeMillis();
         if (now < blockedUntilEpochMs) {
             long millis = blockedUntilEpochMs - now;
@@ -87,7 +95,7 @@ public class OpenAiCompatibleChatClient implements ChatModelClient {
         try {
             URI uri = URI.create(baseUrl + "/chat/completions");
             Map<String, Object> body = Map.of(
-                    "model", model,
+                    "model", selectedModel,
                     "messages", List.of(
                             Map.of("role", "system", "content", systemPrompt),
                             Map.of("role", "user", "content", userPrompt)),
@@ -336,6 +344,39 @@ public class OpenAiCompatibleChatClient implements ChatModelClient {
     }
 
     public String model() { return model; }
+
+    public List<String> availableModels() {
+        if (apiKey == null || apiKey.isBlank()) return List.of();
+        try {
+            HttpRequest request = HttpRequest.newBuilder(URI.create(baseUrl + "/models"))
+                    .timeout(Duration.ofSeconds(Math.min(timeoutSeconds, 10)))
+                    .header("Authorization", "Bearer " + apiKey)
+                    .header("Accept", "application/json")
+                    .GET()
+                    .build();
+            HttpResponse<InputStream> response = http.send(request, HttpResponse.BodyHandlers.ofInputStream());
+            try (InputStream input = response.body()) {
+                if (response.statusCode() < 200 || response.statusCode() >= 300) return List.of();
+                JsonNode root = mapper.readTree(readBounded(input));
+                JsonNode data = root == null ? null : root.get("data");
+                if (data == null || !data.isArray()) return List.of();
+                LinkedHashSet<String> ids = new LinkedHashSet<>();
+                for (JsonNode item : data) {
+                    JsonNode idNode = item.get("id");
+                    if (idNode == null || !idNode.isString()) continue;
+                    JsonNode available = item.get("available");
+                    if (available != null && available.isBoolean() && !available.asBoolean()) continue;
+                    String id = idNode.asString();
+                    if (id.length() <= 128 && id.matches("[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}")) ids.add(id);
+                    if (ids.size() >= 200) break;
+                }
+                return List.copyOf(ids);
+            }
+        } catch (IOException | InterruptedException | RuntimeException exception) {
+            if (exception instanceof InterruptedException) Thread.currentThread().interrupt();
+            return List.of();
+        }
+    }
 
     private record Event(TokenUsage usage, boolean done) { }
 }

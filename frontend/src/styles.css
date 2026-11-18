@@ -207,6 +207,8 @@ h1 > span { color: #70817a; font-weight: 400; }
 .ai-examples { display: flex; flex-wrap: wrap; gap: 7px; }
 .ai-examples button { min-height: 30px; padding: 5px 10px; border: 1px solid #e2e9e3; border-radius: 7px; background: #fff; color: #607368; font: inherit; font-size: 10px; text-align: left; cursor: pointer; }
 .ai-examples button:hover { border-color: #b7d2c3; color: #28785f; }
+.model-picker { display: grid; justify-items: start; gap: 6px; color: #607368; font-size: 11px; }
+.model-picker select { min-width: min(100%, 360px); max-width: 100%; min-height: 36px; padding: 6px 30px 6px 10px; border: 1px solid #dce6de; border-radius: 7px; background: #fff; color: #34483e; font: inherit; font-size: 12px; }
 #ai-question { width: 100%; min-height: 82px; resize: vertical; padding: 13px 14px; border: 1px solid #dfe8e1; border-radius: 9px; outline: none; background: #fff; color: #344b40; font: inherit; font-size: 12px; line-height: 1.7; }
 #ai-question:focus { border-color: #78b69b; box-shadow: 0 0 0 3px rgba(74, 155, 117, .1); }
 .ai-answer { display: grid; gap: 10px; padding: 15px; border: 1px solid #e6ede7; border-radius: 9px; background: #fff; }

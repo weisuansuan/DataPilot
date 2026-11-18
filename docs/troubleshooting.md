@@ -1,45 +1,63 @@
-# Local database troubleshooting
+# 本地数据库故障排查
 
-All commands in this guide operate on the Compose project in this repository. They do not connect to any other MySQL installation.
+本指南中的命令只操作当前仓库的 Docker Compose 项目，不会连接其他 MySQL 安装。
 
-## Docker or Compose is unavailable
+## Docker 或 Compose 不可用
 
-Run `\.\scripts\check-environment.ps1`. It checks the Docker CLI, Engine, and Compose plugin. Start Docker Desktop, wait for the Engine, then retry `\.\scripts\start-mysql.ps1`.
+运行环境检查：
 
-## The MySQL container is unhealthy
+```powershell
+.\scripts\check-environment.ps1
+```
 
-Inspect this Compose project's logs and service state:
+确认 Docker CLI、Engine 和 Compose 插件均可用。若 Engine 未启动，请打开 Docker Desktop 并等待启动完成，再运行：
+
+```powershell
+.\scripts\start-mysql.ps1
+```
+
+## MySQL 容器不健康
+
+查看当前 Compose 项目的服务状态和日志：
 
 ```powershell
 docker compose ps
 docker compose logs --tail 100 mysql
 ```
 
-Check that port 3307 is not in use. Update `DATAPILOT_DB_PORT` in the ignored `.env` file if it conflicts, then rerun `\.\scripts\start-mysql.ps1`. The service binds only to `127.0.0.1`.
+确认本机 3307 端口没有被占用。若端口冲突，可修改被 Git 忽略的 `.env` 中的 `DATAPILOT_DB_PORT`，然后重新启动本项目数据库。MySQL 只绑定到 `127.0.0.1`。
 
-## MySQL initialization did not create users or tables
+## MySQL 初始化没有创建用户或表
 
-MySQL runs files from `database/init/` only when its data directory is empty. Check logs for the first initialization error. The project uses the persistent Compose volume `datapilot_datapilot_mysql_data` (Compose may prefix it with the project name). Do not remove it as a generic troubleshooting step: it contains the local dataset. If an initialization script needs a fix after the volume already exists, apply a reviewed migration to this database or recreate the development database only after confirming the exact project and volume.
+MySQL 只会在数据目录为空时自动执行 `database/init/` 下的初始化脚本。查看首次初始化日志，定位最早的错误。项目使用持久化 Compose 数据卷 `datapilot_datapilot_mysql_data`（Compose 可能会加上项目名前缀），里面保存本地数据。不要把删除数据卷当成通用排查步骤。
 
-For this project's intermediate v1 database, run `\.\scripts\apply-refund-cutoff-migration.ps1` once before reseeding. The script checks for the column first and targets only this repository's Compose database. Fresh databases already include the cutoff column in `001-schema.sql`.
+如果已有数据卷需要修复初始化脚本的变更，请针对本项目数据库执行经过检查的迁移；只有确认项目和目标数据卷后，才可重建开发数据库。
 
-## The API reports a database error
-
-1. Confirm `docker compose ps` shows `mysql` healthy.
-2. Run `\.\scripts\validate-dataset.ps1`; if no dataset exists, run `\.\scripts\seed-synthetic-data.ps1`.
-3. Restart `\.\scripts\start-backend.ps1` so it imports the current `.env` values.
-4. The application connects as `datapilot_reader`; it cannot create or alter tables. The seeder runs separately as `datapilot_seed`.
-
-The API's safe error response does not include SQL text or credentials. The backend log includes a request ID to correlate the failure.
-
-## Reproducible data regeneration
-
-Rerunning the seeder deletes and regenerates rows in the `datapilot` schema only after it confirms the current database and `SYNTHETIC_ECOMMERCE_V1` marker. The seed generator does not drop tables or modify schema. It accepts 10 through 1,000,000 orders. A failed run can be rerun with the same count and fixed seed.
-
-The committed validation SQL can also be run manually:
+若本地数据库是开发期间从中间版本 v1 建立的，请先运行一次：
 
 ```powershell
-\.\scripts\validate-dataset.ps1
+.\scripts\apply-refund-cutoff-migration.ps1
 ```
 
-It checks the returned `PASS` rows, payment/refund consistency, West-region September-to-October decline, and the elevated electronics refund rate.
+此脚本会先检查字段是否已存在，并且只操作本仓库 Compose 数据库。新建数据库已在 `001-schema.sql` 中包含截止时间字段。
+
+## API 报告数据库错误
+
+1. 执行 `docker compose ps`，确认 `mysql` 状态为 healthy。
+2. 运行 `.\scripts\validate-dataset.ps1`；若尚无数据，再运行 `.\scripts\seed-synthetic-data.ps1`。
+3. 重启后端 `.\scripts\start-backend.ps1`，让它读取当前 `.env`。
+4. 应用使用 `datapilot_reader` 连接数据库，不能创建或修改表。数据播种器单独使用 `datapilot_seed`。
+
+API 的安全错误响应不会包含 SQL 文本或凭据。后端日志会带请求 ID，可用来关联排查。
+
+## 可重复生成数据
+
+重新运行播种器前，会确认当前数据库名称和 `SYNTHETIC_ECOMMERCE_V1` 标记；确认后只会在 `datapilot` Schema 中删除并重新生成业务行。播种器不会删除表或修改结构。订单数可设为 10 至 1,000,000；失败后可用相同订单数和固定随机种子重新运行。
+
+也可以手动执行已提交的数据集校验脚本：
+
+```powershell
+.\scripts\validate-dataset.ps1
+```
+
+脚本会检查 `PASS` 结果、支付/退款一致性、西部地区 9 月至 10 月销售额下降，以及电子产品较高的退款率。

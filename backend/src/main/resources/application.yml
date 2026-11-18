@@ -37,6 +37,16 @@ datapilot:
     max-concurrency: ${DATAPILOT_AI_MAX_CONCURRENCY:2}
     max-provider-retries: ${DATAPILOT_AI_MAX_PROVIDER_RETRIES:1}
     max-retry-delay-seconds: ${DATAPILOT_AI_MAX_RETRY_DELAY_SECONDS:5}
+    local:
+      base-url: ${DATAPILOT_AI_LOCAL_BASE_URL:http://127.0.0.1:31415/v1}
+      model: ${DATAPILOT_AI_LOCAL_MODEL:auto}
+      api-key: ${DATAPILOT_AI_LOCAL_API_KEY:}
+      stream: ${DATAPILOT_AI_LOCAL_STREAM:false}
+    modelscope:
+      base-url: ${DATAPILOT_AI_MODELSCOPE_BASE_URL:https://api-inference.modelscope.cn/v1}
+      model: ${DATAPILOT_AI_MODELSCOPE_MODEL:moonshotai/Kimi-K3.1-Pro}
+      api-key: ${DATAPILOT_AI_MODELSCOPE_API_KEY:}
+      stream: ${DATAPILOT_AI_MODELSCOPE_STREAM:true}
 
 server:
   address: 127.0.0.1

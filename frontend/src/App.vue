@@ -39,6 +39,7 @@ interface QueryColumn { name: string; type: string }
 interface QueryResult { success: boolean; columns: QueryColumn[]; rows: Record<string, unknown>[]; rowCount: number; executionTimeMs: number; truncated: boolean; errorCode: string | null; message: string | null }
 interface ValidationResult { allowed: boolean; errorCode: string | null; message: string | null }
 interface ProviderFailure { category: string; status: number; retryAfterSeconds: number | null; attempts: number; remainingRequests: number | null; remainingTokens: number | null }
+interface AiModelOption { id: string; provider: string; model: string; configured: boolean; available: boolean; defaultModel: boolean }
 interface AiResponse { success: boolean; clarificationRequired: boolean; intent: string; sql: string; explanation: string; clarificationQuestion: string; validation: ValidationResult | null; queryResult: QueryResult | null; provider: string; model: string; promptVersion: string; modelResponseTimeMs: number; tokenUsage: { promptTokens: number | null; completionTokens: number | null; totalTokens: number | null } | null; repairAttempts: number; errorCode: string | null; message: string | null; providerFailure: ProviderFailure | null }
 
 const sqlExamples = [
@@ -63,6 +64,9 @@ const aiBusy = ref(false)
 const aiError = ref('')
 const aiStatus = ref('')
 const aiResult = ref<AiResponse | null>(null)
+const aiModels = ref<AiModelOption[]>([])
+const selectedModelId = ref('')
+const aiModelLoadError = ref('')
 const aiRetryWait = ref(0)
 let aiRetryTimer: number | undefined
 
@@ -111,7 +115,7 @@ async function askAi(mode: 'generate' | 'query') {
   aiStatus.value = ''
   aiResult.value = null
   try {
-    const response = await fetch(`/api/v1/ai/${mode}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: aiQuestion.value }) })
+    const response = await fetch(`/api/v1/ai/${mode}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: aiQuestion.value, modelId: selectedModelId.value }) })
     const result: AiResponse = await response.json()
     aiResult.value = result
     if (result.errorCode === 'AI_RATE_LIMITED') startAiCooldown(result.providerFailure)
@@ -162,6 +166,7 @@ const money = new Intl.NumberFormat('zh-CN', { style: 'currency', currency: 'CNY
 const integer = new Intl.NumberFormat('zh-CN')
 
 onMounted(async () => {
+  void loadAiModels()
   try {
     const response = await fetch('/api/v1/analytics/overview', { headers: { Accept: 'application/json' } })
     if (!response.ok) throw new Error(`数据接口返回 HTTP ${response.status}`)
@@ -176,6 +181,18 @@ onMounted(async () => {
     errorMessage.value = error instanceof Error ? error.message : '无法读取数据库分析结果。'
   }
 })
+
+async function loadAiModels() {
+  try {
+    const response = await fetch('/api/v1/ai/models', { headers: { Accept: 'application/json' } })
+    if (!response.ok) throw new Error()
+    const data: { models: AiModelOption[]; defaultModelId: string } = await response.json()
+    aiModels.value = data.models
+    selectedModelId.value = data.defaultModelId
+  } catch {
+    aiModelLoadError.value = '模型列表暂不可用，请检查后端配置。'
+  }
+}
 
 </script>
 
@@ -220,7 +237,9 @@ onMounted(async () => {
     </section>
 
     <section class="ai-workbench" aria-label="AI 智能分析">
-      <div class="sql-heading"><div><p class="section-kicker">QINIU AI · TEXT2SQL</p><h2>自然语言智能分析</h2><p>模型只生成 SQL；服务端重新校验后才允许只读执行。</p></div><span>限量重试 · 查询限制沿用安全引擎</span></div>
+      <div class="sql-heading"><div><p class="section-kicker">AI TEXT2SQL</p><h2>自然语言智能分析</h2><p>模型只生成 SQL；服务端重新校验后才允许只读执行。</p></div><span>限量重试 · 查询限制沿用安全引擎</span></div>
+      <label class="model-picker" for="ai-model">使用模型<select id="ai-model" v-model="selectedModelId" :disabled="aiBusy || !aiModels.some(model => model.available)"><option v-for="model in aiModels" :key="model.id" :value="model.id" :disabled="!model.available">{{ model.provider }} · {{ model.model }}{{ model.defaultModel ? '（默认）' : '' }}{{ model.available ? '' : '（不可用）' }}</option></select></label>
+      <p v-if="aiModelLoadError" class="query-error" role="status">{{ aiModelLoadError }}</p>
       <div class="ai-examples"><button v-for="question in aiQuestions" :key="question" type="button" @click="aiQuestion = question">{{ question }}</button></div>
       <label class="sr-only" for="ai-question">自然语言分析问题</label>
       <textarea id="ai-question" v-model="aiQuestion" aria-label="自然语言分析问题" maxlength="500" placeholder="例如：比较 9 月和 10 月各地区实付金额"></textarea>

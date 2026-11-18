@@ -1,28 +1,23 @@
 # DataPilot
 
-An interview-ready, safety-first AI data-analysis application built around verifiable database results. The project is being developed in reviewed, runnable stages.
+DataPilot 是一个面向业务分析场景的 AI 数据分析演示项目。用户可以查看电商仪表盘、手动编写只读 SQL，或用中文提出问题，由模型生成 SQL 后交给服务端安全校验，再从 MySQL 读取真实合成数据并展示结果。
 
-> **Stage 5 complete — AI reliability and data visualization.** Text2SQL evaluation, provider cooldowns, result-grounded insights, and deterministic chart recommendations build on the Stage 3 safety policy and Stage 4 Qiniu client. See [stage verification](docs/implementation-plan.md#stage-5-verification-2026-11-07).
+项目强调结果可核验：查询受 SQL AST 策略、`datapilot_reader` 只读权限、`EXPLAIN` 成本检查、执行超时、并发上限和 200 行结果上限共同保护。AI 生成的 SQL 不能绕过这些限制。
 
-## Technology
+> **第五阶段已完成：** 已加入 Text2SQL 可靠性处理、20 题离线评测、结果图表推荐和中文数据洞察。在线模型评测样本有限；详见[项目阶段与验证摘要](docs/implementation-summary.md)。
 
-- Java 21, Spring Boot 4.1.2, Spring AI 2.0.2, Maven Wrapper 3.9.16
-- Vue 3, TypeScript, Vite, ECharts
-- MySQL 8.4.13 and Docker Compose
+## 技术栈
 
-## Requirements
+- Java 21、Spring Boot 4.1.2、Maven Wrapper 3.9.16
+- Vue 3、TypeScript、Vite、ECharts
+- MySQL 8.4.13、Docker Compose
+- Qiniu AI OpenAI-compatible Chat Completions API（可选）
 
-JDK 21, Node.js 22.12 or later, npm, Git, and Docker Desktop with a running Docker Engine and Compose plugin.
+## 快速开始
 
-Check the local environment from PowerShell:
+需要 JDK 21、Node.js 22.12 或更新版本、npm、Git，以及已启动的 Docker Desktop。以下命令在项目根目录的 PowerShell 中执行。
 
-```powershell
-.\scripts\check-environment.ps1
-```
-
-## Start the database and seed data
-
-Run these commands from the project root in PowerShell. The first command creates an ignored `.env` with local random database credentials and starts only this project's MySQL service.
+### 1. 启动数据库并生成合成数据
 
 ```powershell
 .\scripts\start-mysql.ps1
@@ -30,13 +25,11 @@ Run these commands from the project root in PowerShell. The first command create
 .\scripts\validate-dataset.ps1
 ```
 
-The default seed contains 100,000 orders. On the development machine the fixed-seed batch run completed in about 15 seconds; actual timing depends on the machine. To exercise a larger dataset, pass any count from 10 to 1,000,000, for example `./scripts/seed-synthetic-data.ps1 -OrderCount 250000`. Rerunning the seeder replaces rows only in the dedicated `datapilot` schema after checking both its database name and synthetic dataset marker. The named MySQL volume persists across restarts.
+首次启动会创建被 Git 忽略的 `.env`，保存本地数据库随机密码。默认数据集包含 100,000 笔订单；种子固定，适合重复验证。所有业务数据均为合成数据。
 
-Database accounts are split by purpose: `datapilot_reader` has `SELECT` and metadata-only `SHOW VIEW` on `datapilot.*` and is used by the web application; `datapilot_seed` has only `SELECT`, `INSERT`, `UPDATE`, and `DELETE` on that schema and is used only by the seeder. The MySQL root password is used only inside the database container. Versioned schema files in `database/init/` run when the named volume is first initialized.
+### 2. 启动后端与网页
 
-## Start the services
-
-Open two PowerShell terminals from the project root:
+分别在两个 PowerShell 窗口运行：
 
 ```powershell
 .\scripts\start-backend.ps1
@@ -46,91 +39,63 @@ Open two PowerShell terminals from the project root:
 .\scripts\start-frontend.ps1
 ```
 
-Open http://127.0.0.1:5173. The dashboard calls `GET /api/v1/analytics/overview` and displays the response read from MySQL. The SQL workbench provides validation, execution, sample analyses, and a bounded results table.
+打开 <http://127.0.0.1:5173>。如果本地使用了其他 Vite 端口，请以启动日志显示的地址为准。
 
-The AI workbench uses `QINIU_API_KEY` from the Windows user or process environment. The backend must be started after the variable is available. It defaults to Qiniu AI's OpenAI-compatible endpoint `https://api.qnaigc.com/v1` and model `qiniu/conatus-free`; it never sends the key to the browser. Keep the key outside Git and logs. To switch to another OpenAI-compatible provider, set `DATAPILOT_AI_BASE_URL`, `DATAPILOT_AI_MODEL`, and `DATAPILOT_AI_PROVIDER` in the backend process environment.
+### 3. （可选）启用 AI 分析
 
-Apply the versioned aggregate views to an existing local database after updating to this stage:
+模型密钥只在后端进程环境中设置，不要写入前端配置、源码、日志或 Git。支持 Qiniu、FreeLLMAPI 本地服务和 ModelScope 的 Kimi-K3.1-Pro；后两者都可在工作台下拉切换。FreeLLMAPI 默认地址为 `http://127.0.0.1:31415/v1`，ModelScope 默认地址为 `https://api-inference.modelscope.cn/v1`。没有可用模型时，仪表盘和手动 SQL 工作台仍可使用，自动化测试使用离线 Mock。
 
-```powershell
-.\scripts\apply-query-views.ps1
-```
+AI 默认模型仍按 `DATAPILOT_AI_PROVIDER` 配置（默认 Qiniu）；工作台可切换到已发现的 FreeLLMAPI 本地模型。配置方式、模型目录 API、限流处理和调用示例见 [AI Text2SQL 使用说明](docs/ai-text2sql.md)。
 
-Newly initialized databases create the views automatically. They are `SQL SECURITY INVOKER` views over the existing synthetic tables; no business rows are changed.
+## 工作台功能
 
-## SQL query API
+- **仪表盘：** 展示订单、实付、退款、地区销售变化和品类退款率；金额口径及退款观察截止时间随结果说明。
+- **手动 SQL：** 提供 SQL 编辑、服务端安全校验、执行、错误提示和表格结果。
+- **AI 分析：** 输入中文业务问题；模型生成 SQL 后，由服务端独立校验并通过只读执行引擎查询。结果可查看 SQL、耗时、图表和原始表格。
+- **图表与洞察：** 根据结果列和数据确定性推荐 KPI、柱状图、折线图、饼图或表格；中文结论只引用本次 SQL 结果。
 
-- `POST /api/v1/query/validate` — server-side MySQL-dialect AST parsing and policy checks.
-- `POST /api/v1/query/execute` — revalidates the SQL, then executes it as `datapilot_reader`; maximum 200 returned rows.
-- `GET /api/v1/metrics` — business metric definitions, formulas, filters, dimensions, and fields.
+## API 一览
 
-Example request:
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| `GET` | `/api/v1/metrics` | 获取业务指标目录 |
+| `POST` | `/api/v1/query/validate` | 校验 SQL 是否符合服务端安全策略 |
+| `POST` | `/api/v1/query/execute` | 重新校验并执行只读查询 |
+| `POST` | `/api/v1/ai/generate` | 生成 SQL 并返回安全校验，不执行查询 |
+| `POST` | `/api/v1/ai/query` | 生成、校验并执行 SQL 的一键流程 |
+| `GET` | `/api/v1/ai/models` | 获取已配置模型与默认选项 |
 
-```powershell
-$body = @{ sql = "SELECT paid_month, paid_order_count, paid_amount FROM v_monthly_paid_sales ORDER BY paid_month" } | ConvertTo-Json
-Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8080/api/v1/query/execute -ContentType 'application/json' -Body $body
-```
+SQL 查询 API 将 DECIMAL 和 BIGINT 以十进制字符串返回，避免浏览器解析 JSON 时舍入金额或大整数。完整示例见[中文快速使用指南](docs/user-guide.md)及[SQL 安全与指标说明](docs/sql-query-safety.md)。
 
-The validation endpoint returns `allowed`, `errorCode`, and a safe message. Execution returns column names and database types, rows, `rowCount`, `executionTimeMs`, and `truncated`. DECIMAL and BIGINT values in rows are decimal strings to preserve precision in browser JSON clients. It returns controlled error codes such as `SQL_PARSE_ERROR`, `UNAUTHORIZED_TABLE`, `UNAUTHORIZED_COLUMN`, `QUERY_PLAN_LIMIT`, `QUERY_TIMEOUT`, and `QUERY_BUSY`; it does not return SQL or database exception text.
+## 评测与开发验证
 
-See [docs/sql-query-safety.md](docs/sql-query-safety.md) for supported SQL, limits, metric definitions, and additional request examples.
-
-## AI Text2SQL API
-
-- `POST /api/v1/ai/generate` — generates SQL and returns its server-side validation; this endpoint does not execute the query.
-- `POST /api/v1/ai/query` — generates, validates, and executes in one request through the existing bounded read-only query service.
-
-Example one-click analysis:
-
-```powershell
-$body = @{ question = "列出 2026 年每月实付金额和已支付订单数" } | ConvertTo-Json
-Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8080/api/v1/ai/query -ContentType 'application/json' -Body $body
-```
-
-For a user-confirmed flow, call `/api/v1/ai/generate`, inspect `sql` and `validation.allowed`, then place the SQL in the existing SQL workbench and execute it. The `/api/v1/query/execute` endpoint revalidates the SQL independently. See [docs/ai-text2sql.md](docs/ai-text2sql.md) for provider settings, prompt versioning, repair rules, and the 20-question evaluation corpus.
-
-## Reliability evaluation and charts
-
-Run the offline, no-provider 20-question workflow against local MySQL:
+离线评测会用语料中的参考 SQL 作为确定性模型响应，通过真实 MySQL、AST 校验和查询结果比较跑完 20 题；它验证流程，不代表在线模型准确率。
 
 ```powershell
 .\scripts\evaluate-text2sql.ps1 -Mode mock
+.\scripts\verify-project.ps1
 ```
 
-The deterministic fixture exercises AST validation, bounded MySQL execution, and exact result comparison. Reports are written under `.runtime/evaluations/` and do not represent live-model accuracy. Credentialed live evaluation supports at most five calls, waits between calls, disables model/provider retries, and stops after a 429:
+真实模型评测最多允许 5 次 API 请求，并在限流时停止：
 
 ```powershell
 .\scripts\evaluate-text2sql.ps1 -Mode live -MaxCalls 3 -IntervalSeconds 10
 ```
 
-See [docs/text2sql-evaluation.md](docs/text2sql-evaluation.md) for denominators and [docs/ai-visualization.md](docs/ai-visualization.md) for chart selection, numeric fallbacks, and result-grounded conclusions. Frontend rule tests run with `npm run test:unit` from `frontend`.
+评测结果默认保存在被忽略的 `.runtime/evaluations/`。更多指标与限制见 [Text2SQL 评测说明](docs/text2sql-evaluation.md)。
 
-## Build and test
+## 文档导航
 
-Run after starting MySQL and seeding the default 100,000-order dataset. This command imports the ignored `.env`, then Maven clean `verify` runs the live-MySQL `*IT` checks for data and reader permissions, followed by the frontend type check and production build.
+- [中文快速使用指南](docs/user-guide.md)：启动、工作台操作、SQL 与 AI API 示例。
+- [SQL 安全与业务指标](docs/sql-query-safety.md)：支持语法、执行边界、指标口径和请求示例。
+- [AI Text2SQL 配置与调用](docs/ai-text2sql.md)：Qiniu 配置、错误处理、限流和工作流程。
+- [Text2SQL 可靠性评测](docs/text2sql-evaluation.md)：离线/在线模式、分母定义与实际结果。
+- [图表推荐与数据洞察](docs/ai-visualization.md)：图表规则、数值精度和结论生成。
+- [本地数据库故障排查](docs/troubleshooting.md)：Docker、MySQL 和 API 常见问题。
+- [项目阶段与验证摘要](docs/implementation-summary.md)：五个阶段的交付内容、验收结果和已知限制。
 
-```powershell
-.\scripts\verify-project.ps1
-```
+## 数据库账号与凭据
 
-The Maven Wrapper downloads and verifies Maven 3.9.16 on its first run. `npm ci` installs the committed `package-lock.json` exactly.
+应用使用 `datapilot_reader`，该账号仅有当前 schema 的 `SELECT` 和元数据级 `SHOW VIEW` 权限。数据播种器单独使用 `datapilot_seed`。数据库初始化、迁移、播种和查询执行凭据彼此分离。
 
-## Database and credentials
-
-`scripts/setup-local-env.ps1` creates `.env` from the committed template and generates local database passwords. `.env` is ignored by Git. Never commit it or paste its values into logs. The AI key is read only by the backend from `QINIU_API_KEY`; no model key is stored in `.env`, source files, or frontend assets.
-
-Key files:
-
-- `database/init/001-schema.sql`: relationships, constraints, indexes, synthetic-data markers, and the fixed refund observation cutoff (`2026-11-06`).
-- `database/init/003-analytics-views.sql`: safe, invoker-security aggregate views for paid sales and refund analysis.
-- `database/migrations/002-refund-observation-cutoff.sql`: update for a local database created from the intermediate v1 schema during development.
-- `database/init/002-users.sh`: database-scoped reader and seed accounts.
-- `database/validation/001-business-checks.sql`: payment/refund consistency and expected business trends.
-- `backend/src/main/java/com/datapilot/seed/`: fixed-seed batch generator.
-- `backend/src/main/resources/prompts/text2sql-v1.txt`: versioned system prompt with schema and metric context injected at runtime.
-- `backend/src/main/resources/text2sql/evaluation-v1.json`: 20 natural-language evaluation questions with reference SQL and canonical values.
-- `docs/ai-text2sql.md`: Qiniu configuration, API usage, safety and repair behavior, and evaluation instructions.
-- `docs/text2sql-evaluation.md`: bounded offline/live evaluation, metric definitions, and result comparison.
-- `docs/ai-visualization.md`: deterministic chart recommendations and data-backed insight rules.
-- `docs/troubleshooting.md`: startup and database recovery guidance.
-- `docs/implementation-plan.md`: original scope, accepted decisions, stage checks, and required model-driven Text2SQL closure.
+`.env` 由本地脚本生成并被 Git 忽略。严禁提交 `.env`、数据库密码、AI 密钥、客户数据或其他凭据。

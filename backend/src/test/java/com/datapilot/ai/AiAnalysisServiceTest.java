@@ -157,6 +157,25 @@ class AiAnalysisServiceTest {
         verify(queryService, never()).execute(org.mockito.ArgumentMatchers.anyString());
     }
 
+    @Test
+    void rejectsAnUnregisteredModelBeforeCallingTheProviderOrDatabase() {
+        FakeChatModel model = new FakeChatModel(json("SELECT COUNT(*) FROM sales_order"));
+        var result = service(model).query("统计订单数", "unregistered-model");
+        assertFalse(result.success());
+        assertEquals("AI_MODEL_NOT_AVAILABLE", result.errorCode());
+        assertEquals(0, model.calls);
+        verify(queryService, never()).execute(org.mockito.ArgumentMatchers.anyString());
+    }
+
+    @Test
+    void recordsTheSelectedModelAfterTheExistingSqlPolicyApprovesIt() {
+        FakeChatModel model = new FakeChatModel(json("SELECT COUNT(*) FROM sales_order"));
+        var result = service(model).generate("统计订单数", "qiniu");
+        assertTrue(result.success());
+        assertEquals("mock", result.model());
+        assertEquals("mock", model.requestedModel);
+    }
+
     private AiAnalysisService service(ChatModelClient model) {
         return new AiAnalysisService(model, promptBuilder, policy, queryService, "qiniu", 2, 2);
     }
@@ -169,12 +188,17 @@ class AiAnalysisServiceTest {
     private static final class FakeChatModel implements ChatModelClient {
         private final Deque<String> responses = new ArrayDeque<>();
         private String lastSystem = "";
+        private String requestedModel = "";
         private int calls;
         FakeChatModel(String... responses) { this.responses.addAll(java.util.List.of(responses)); }
         @Override public Completion complete(String systemPrompt, String userPrompt) {
             calls++;
             lastSystem = systemPrompt;
             return new Completion(responses.removeFirst(), new TokenUsage(5, 3, 8));
+        }
+        @Override public Completion complete(String systemPrompt, String userPrompt, String selectedModel) {
+            requestedModel = selectedModel;
+            return complete(systemPrompt, userPrompt);
         }
         @Override public String model() { return "mock"; }
     }
