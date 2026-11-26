@@ -1,5 +1,7 @@
 # DataPilot
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 DataPilot 是一个面向业务分析场景的 AI 数据分析演示项目。用户可以查看电商仪表盘、手动编写只读 SQL，或用中文提出问题，由模型生成 SQL 后交给服务端安全校验，再从 MySQL 读取真实合成数据并展示结果。
 
 项目强调结果可核验：查询受 SQL AST 策略、`datapilot_reader` 只读权限、`EXPLAIN` 成本检查、执行超时、并发上限和 200 行结果上限共同保护。AI 生成的 SQL 不能绕过这些限制。
@@ -16,6 +18,11 @@ DataPilot 是一个面向业务分析场景的 AI 数据分析演示项目。用
 ## 快速开始
 
 需要 JDK 21、Node.js 22.12 或更新版本、npm、Git，以及已启动的 Docker Desktop。以下命令在项目根目录的 PowerShell 中执行。
+
+```powershell
+git clone https://github.com/weisuansuan/DataPilot.git
+cd DataPilot
+```
 
 ### 1. 启动数据库并生成合成数据
 
@@ -39,7 +46,7 @@ DataPilot 是一个面向业务分析场景的 AI 数据分析演示项目。用
 .\scripts\start-frontend.ps1
 ```
 
-打开 <http://127.0.0.1:5173>。如果本地使用了其他 Vite 端口，请以启动日志显示的地址为准。
+打开 <http://127.0.0.1:5173>。开发服务器固定使用 5173 端口；若端口被占用，请先释放端口再启动。
 
 ### 3. （可选）启用 AI 分析
 
@@ -99,3 +106,13 @@ SQL 查询 API 将 DECIMAL 和 BIGINT 以十进制字符串返回，避免浏览
 应用使用 `datapilot_reader`，该账号仅有当前 schema 的 `SELECT` 和元数据级 `SHOW VIEW` 权限。数据播种器单独使用 `datapilot_seed`。数据库初始化、迁移、播种和查询执行凭据彼此分离。
 
 `.env` 由本地脚本生成并被 Git 忽略。严禁提交 `.env`、数据库密码、AI 密钥、客户数据或其他凭据。
+
+## 使用范围
+
+本项目面向本地学习、演示和开发，默认使用合成电商数据，尚未实现用户登录与多租户权限。请在本地或可信环境运行；部署到公网前需要自行补齐身份认证和访问控制。AI 服务需自行配置，服务商可用性、额度及使用条款由各服务商决定。
+
+## 贡献与许可证
+
+欢迎提交 [Issue](https://github.com/weisuansuan/DataPilot/issues) 或 Pull Request，开发和验证步骤见 [贡献指南](CONTRIBUTING.md)。
+
+本项目采用 [MIT 许可证](LICENSE)。第三方依赖及外部模型服务保留各自的许可证和使用条款。

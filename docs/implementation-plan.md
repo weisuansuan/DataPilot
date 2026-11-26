@@ -90,6 +90,15 @@ Online semantic accuracy beyond the single successful live sample remains unknow
 - Full `scripts/verify-project.ps1` was attempted. Its 10 MySQL integration tests could not pass because Docker Desktop's Linux engine pipe was absent and `scripts/start-mysql.ps1` could not start the database. The Docker Desktop executable was not present at the standard install paths. No schema or synthetic business rows were changed.
 - Online Text2SQL evaluation was not run in this follow-up because the seeded MySQL service was unavailable; the historical limited live result above remains the only recorded online evidence. Resume with Docker Desktop running, validate the dataset, then use `scripts/evaluate-text2sql.ps1 -Mode live -MaxCalls 5` to preserve the call cap.
 
+## Open-source preparation and verification (2026-11-26)
+
+- Added the MIT license, contributor instructions, repository clone steps, and local-demo deployment scope. The existing personal interview guide stays local and is ignored; no application behavior or dependency version was changed.
+- Checked all 7 existing commits (155 historical file blobs) for common credential patterns and exact matches to available local secret values; no matches were found. `.env`, `.runtime/`, database files and build outputs remain ignored. This check is a release-preparation measure, not a full security audit.
+- The first `scripts/verify-project.ps1` attempt failed its MySQL integration checks while Docker was unavailable. Started the installed Docker Desktop and ran `scripts/start-mysql.ps1`; the existing database became healthy without reseeding.
+- `scripts/validate-dataset.ps1`: **12/12 PASS** against the existing 100,000-order synthetic dataset.
+- Reran `scripts/verify-project.ps1`: Maven `clean verify` **BUILD SUCCESS**, **40 unit tests and 10 real-MySQL integration tests passed**, with no failures, errors or skips. Frontend **8 unit tests**, TypeScript type check and production build all passed.
+- `scripts/evaluate-text2sql.ps1 -Mode mock`: **20/20** generation, AST approval, execution and exact result comparison; **0** safety violations and **0** provider API calls. Online-model accuracy was not reevaluated.
+
 ## Operational boundaries
 
 Run project commands from Windows PowerShell using the root scripts and `backend/mvnw.cmd`. Keep services on loopback for local development. A failure in an earlier gate pauses dependent stage work and is recorded with the command, actual output and next action. Do not silently skip tests or report unrun checks as passing. Offline fixture accuracy does not imply live-model semantic accuracy.

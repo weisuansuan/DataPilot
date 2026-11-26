@@ -10,3 +10,6 @@
 database/data/
 .DS_Store
 Thumbs.db
+
+# Personal interview preparation, kept locally.
+/docs/面试通关讲义.md
